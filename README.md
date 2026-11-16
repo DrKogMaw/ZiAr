@@ -14,7 +14,7 @@ Open `android/` in Android Studio (Ladybug or newer), let it sync Gradle, and ru
 
 ## Usage
 
-Use **Choose files** or drag files onto the Windows app to queue them for your phone. They are removed from the queue after download, and unsent files are cleared when the Windows app closes. On Android, tap **Choose multiple files** and select several files in the system picker to send them in one batch to the PC's `Downloads/ZiAr Received` folder; click the folder path in the Windows app to open it. Phone downloads go to its Downloads folder. ZiAr shows only files currently waiting for the phone, with no history. Duplicate received filenames get a numbered suffix.
+Use **Choose files** or drag files onto the Windows app to send them to your paired Android phone. While ZiAr is open on the phone, it automatically saves incoming files to Downloads. Files are removed from the PC queue after download, and unsent files are cleared when the Windows app closes. On Android, tap **Choose multiple files** and select several files in the system picker to send them in one batch to the PC's `Downloads/ZiAr Received` folder; click the folder path in the Windows app to open it. ZiAr shows only files currently waiting for the phone, with no history. Duplicate received filenames get a numbered suffix.
 
 Transfers use the local network over HTTP with a session cookie and a six-digit pairing code. Use ZiAr on a trusted private Wi-Fi network. The Windows PC must remain on and reachable; transfers over the internet are not supported. Each file is limited to 1 GB.
 

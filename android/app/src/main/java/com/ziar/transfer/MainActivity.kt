@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -22,6 +24,9 @@ import android.widget.Toast
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.SocketTimeoutException
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONArray
 
 class MainActivity : Activity() {
     private var chooser: ValueCallback<Array<Uri>>? = null
@@ -33,6 +38,16 @@ class MainActivity : Activity() {
     @Volatile private var discovering = false
     @Volatile private var discoveryGeneration = 0
     private val chooserRequest = 42
+    private val pollHandler = Handler(Looper.getMainLooper())
+    private val queuedDownloads = mutableSetOf<String>()
+    private var pollInFlight = false
+    private var isActive = false
+    private val pollTask = object : Runnable {
+        override fun run() {
+            if (isActive && ::web.isInitialized && web.visibility == View.VISIBLE && !pollInFlight) pollForPcFiles()
+            pollHandler.postDelayed(this, 3000)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,28 +91,66 @@ class MainActivity : Activity() {
                 }
             }
             setDownloadListener(DownloadListener { url, userAgent, disposition, _, _ ->
-                try {
-                    val uri = Uri.parse(url)
-                    if (uri.host != currentHost() || uri.path != "/api/download") return@DownloadListener
-                    val name = uri.getQueryParameter("name") ?: "ZiAr file"
-                    val request = DownloadManager.Request(uri)
-                        .addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url) ?: "")
-                        .addRequestHeader("User-Agent", userAgent)
-                        .setTitle(name)
-                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
-                    (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-                    Toast.makeText(this@MainActivity, "Downloading $name", Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) { Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_LONG).show() }
+                val uri = Uri.parse(url)
+                if (uri.host == currentHost() && uri.path == "/api/download") {
+                    val name = uri.getQueryParameter("name") ?: return@DownloadListener
+                    if (name !in queuedDownloads && queueDownload(name, userAgent)) queuedDownloads.add(name)
+                }
             })
         }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(setup); addView(web, LinearLayout.LayoutParams(-1, 0, 1f)) }
         setContentView(root)
         address.setText(getPreferences(0).getString("host", ""))
         showSetup(true)
+        pollHandler.post(pollTask)
     }
 
     private fun currentHost() = getPreferences(0).getString("host", "") ?: ""
+    private fun queueDownload(name: String, userAgent: String = web.settings.userAgentString): Boolean {
+        return try {
+            val url = Uri.parse("http://${currentHost()}:47831/api/download").buildUpon().appendQueryParameter("name", name).build()
+            val request = DownloadManager.Request(url)
+                .addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url.toString()) ?: "")
+                .addRequestHeader("User-Agent", userAgent)
+                .setTitle(name)
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+            (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+            Toast.makeText(this, "Receiving $name", Toast.LENGTH_SHORT).show()
+            true
+        } catch (e: Exception) {
+            Toast.makeText(this, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+            false
+        }
+    }
+
+    private fun pollForPcFiles() {
+        val base = "http://${currentHost()}:47831"
+        val cookie = CookieManager.getInstance().getCookie(base) ?: return
+        pollInFlight = true
+        Thread {
+            var connection: HttpURLConnection? = null
+            try {
+                val active = (URL("$base/api/files").openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 3000
+                    readTimeout = 3000
+                    setRequestProperty("Cookie", cookie)
+                }
+                connection = active
+                if (active.responseCode == 200) {
+                    val names = JSONArray(active.inputStream.bufferedReader().use { it.readText() })
+                    val pending = (0 until names.length()).map { names.getJSONObject(it).getString("name") }
+                    runOnUiThread {
+                        if (isActive && web.visibility == View.VISIBLE && currentHost() == Uri.parse(base).host) {
+                            queuedDownloads.retainAll(pending.toSet())
+                            for (name in pending) if (name !in queuedDownloads && queueDownload(name)) queuedDownloads.add(name)
+                        }
+                    }
+                }
+            } catch (_: Exception) { /* Retry while paired and the PC is available. */ }
+            finally { connection?.disconnect(); runOnUiThread { pollInFlight = false } }
+        }.start()
+    }
     private fun startDiscovery() {
         stopDiscovery()
         discoveryStatus.text = "Searching for your Windows PC on Wi-Fi…"
@@ -155,5 +208,7 @@ class MainActivity : Activity() {
     }
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { if (web.visibility == View.VISIBLE) showSetup(true) else super.onBackPressed() }
-    override fun onDestroy() { stopDiscovery(); web.destroy(); super.onDestroy() }
+    override fun onResume() { super.onResume(); isActive = true }
+    override fun onPause() { isActive = false; super.onPause() }
+    override fun onDestroy() { pollHandler.removeCallbacks(pollTask); stopDiscovery(); web.destroy(); super.onDestroy() }
 }
