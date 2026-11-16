@@ -1,13 +1,17 @@
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const { createTransferServer, PORT } = require('./server.cjs');
 const { startDiscovery } = require('./discovery.cjs');
 
 let transfer;
 let window;
 let stopDiscovery;
+let pendingDirectory;
 app.whenReady().then(() => {
-  transfer = createTransferServer({ directory: path.join(app.getPath('documents'), 'ZiAr Shared') });
+  pendingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-session-'));
+  transfer = createTransferServer({ pendingDirectory, receivedDirectory: path.join(app.getPath('downloads'), 'ZiAr Received') });
   transfer.server.listen(PORT, '0.0.0.0', () => {
     stopDiscovery = startDiscovery();
     window = new BrowserWindow({ width: 1000, height: 760, minWidth: 680, minHeight: 500, title: 'ZiAr',
@@ -20,4 +24,4 @@ app.whenReady().then(() => {
   });
 });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { stopDiscovery?.(); transfer?.server.close(); });
+app.on('before-quit', () => { stopDiscovery?.(); transfer?.server.close(); if (pendingDirectory) fs.rmSync(pendingDirectory, { recursive: true, force: true }); });

@@ -1,6 +1,6 @@
 # ZiAr
 
-ZiAr transfers files between a Windows PC and an Android phone on the same Wi-Fi network. The Windows app hosts a shared folder and generates a fresh six-digit pairing code each time it starts. The Android app discovers the PC automatically, then asks for the code shown on Windows. Files stay on the PC in `Documents/ZiAr Shared` until downloaded. No cloud account is involved.
+ZiAr transfers files between a Windows PC and an Android phone on the same Wi-Fi network. The Windows app hosts the transfer connection and generates a fresh six-digit pairing code each time it starts. The Android app discovers the PC automatically, then asks for the code shown on Windows. ZiAr does not keep a shared-file library or transfer history. No cloud account is involved.
 
 ## Windows
 
@@ -14,7 +14,7 @@ Open `android/` in Android Studio (Ladybug or newer), let it sync Gradle, and ru
 
 ## Usage
 
-Use **Choose files** or drag files onto the Windows app to make them available to Android. Use **Choose files** on Android to send files into the Windows shared folder. **Refresh** updates the file list on either device. Duplicate filenames are kept with a numbered suffix.
+Use **Choose files** or drag files onto the Windows app to queue them for your phone. They are removed from the queue after download, and unsent files are cleared when the Windows app closes. Use **Choose files** on Android to send files into the PC's `Downloads/ZiAr Received` folder. Phone downloads go to its Downloads folder. ZiAr shows only files currently waiting for the phone, with no history. Duplicate received filenames get a numbered suffix.
 
 Transfers use the local network over HTTP with a session cookie and a six-digit pairing code. Use ZiAr on a trusted private Wi-Fi network. The Windows PC must remain on and reachable; transfers over the internet are not supported. Each file is limited to 1 GB.
 

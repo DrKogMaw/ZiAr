@@ -25,8 +25,13 @@ function uniquePath(dir, name) {
   return candidate;
 }
 
-function createTransferServer({ directory, port = PORT, code = String(crypto.randomInt(100000, 1000000)) }) {
-  fs.mkdirSync(directory, { recursive: true });
+function isLoopback(peer) {
+  return peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
+}
+
+function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback }) {
+  fs.mkdirSync(pendingDirectory, { recursive: true });
+  fs.mkdirSync(receivedDirectory, { recursive: true });
   const sessions = new Set();
   const attempts = new Map();
   const sendJson = (res, status, value) => {
@@ -37,7 +42,7 @@ function createTransferServer({ directory, port = PORT, code = String(crypto.ran
     try {
       const url = new URL(req.url, 'http://localhost');
       const peer = req.socket.remoteAddress || '';
-      const loopback = peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
+      const loopback = isDesktopRequest(peer);
       const session = /(?:^|; )ziar=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
       const authorized = loopback || (session && sessions.has(session));
       if (req.method === 'GET' && url.pathname === '/') {
@@ -65,10 +70,10 @@ function createTransferServer({ directory, port = PORT, code = String(crypto.ran
         return sendJson(res, 200, { ok: true });
       }
       if (!authorized) return sendJson(res, 401, { error: 'Pair with your PC first.' });
-      if (req.method === 'GET' && url.pathname === '/api/info') return sendJson(res, 200, { name: os.hostname(), addresses: localAddresses(), port, local: loopback, directory: loopback ? directory : undefined, code: loopback ? code : undefined });
+      if (req.method === 'GET' && url.pathname === '/api/info') return sendJson(res, 200, { name: os.hostname(), addresses: localAddresses(), port, local: loopback, receivedDirectory: loopback ? receivedDirectory : undefined, code: loopback ? code : undefined });
       if (req.method === 'GET' && url.pathname === '/api/files') {
-        const files = fs.readdirSync(directory, { withFileTypes: true }).filter(f => f.isFile()).map(f => {
-          const stat = fs.statSync(path.join(directory, f.name));
+        const files = fs.readdirSync(pendingDirectory, { withFileTypes: true }).filter(f => f.isFile() && !f.name.endsWith('.part')).map(f => {
+          const stat = fs.statSync(path.join(pendingDirectory, f.name));
           return { name: f.name, size: stat.size, modified: stat.mtime.toISOString() };
         }).sort((a, b) => b.modified.localeCompare(a.modified));
         return sendJson(res, 200, files);
@@ -77,9 +82,10 @@ function createTransferServer({ directory, port = PORT, code = String(crypto.ran
         const name = url.searchParams.get('name');
         const length = Number(req.headers['content-length']);
         if (!name || !Number.isFinite(length) || length < 0 || length > MAX_FILE_BYTES) return sendJson(res, 413, { error: 'File must be 1 GB or smaller.' });
-        if (fs.readdirSync(directory).length >= MAX_FILES) return sendJson(res, 507, { error: 'Shared folder is full.' });
-        const target = uniquePath(directory, name);
-        const temp = path.join(directory, `.${crypto.randomUUID()}.part`);
+        const destination = loopback ? pendingDirectory : receivedDirectory;
+        if (loopback && fs.readdirSync(pendingDirectory).length >= MAX_FILES) return sendJson(res, 507, { error: 'Too many files waiting for the phone.' });
+        const target = uniquePath(destination, name);
+        const temp = path.join(destination, `.${crypto.randomUUID()}.part`);
         let bytes = 0;
         try {
           const output = fs.createWriteStream(temp, { flags: 'wx' });
@@ -91,7 +97,7 @@ function createTransferServer({ directory, port = PORT, code = String(crypto.ran
           await new Promise((resolve, reject) => output.end(error => error ? reject(error) : resolve()));
           if (bytes !== length) throw new Error('Incomplete upload.');
           fs.renameSync(temp, target);
-          return sendJson(res, 201, { name: path.basename(target) });
+          return sendJson(res, 201, { name: path.basename(target), received: !loopback });
         } catch (error) {
           fs.rmSync(temp, { force: true });
           return sendJson(res, 400, { error: error.message });
@@ -100,16 +106,18 @@ function createTransferServer({ directory, port = PORT, code = String(crypto.ran
       if (req.method === 'GET' && url.pathname === '/api/download') {
         const name = url.searchParams.get('name');
         if (!name || safeName(name) !== name) return sendJson(res, 400, { error: 'Invalid filename.' });
-        const file = path.join(directory, name);
+        if (loopback) return sendJson(res, 403, { error: 'Download on your phone instead.' });
+        const file = path.join(pendingDirectory, name);
         if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return sendJson(res, 404, { error: 'File not found.' });
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': fs.statSync(file).size,
           'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`, 'Cache-Control': 'no-store' });
+        res.once('finish', () => fs.rm(file, { force: true }, error => { if (error) console.error('Could not clear sent file:', error); }));
         return fs.createReadStream(file).pipe(res);
       }
       sendJson(res, 404, { error: 'Not found.' });
     } catch (error) { sendJson(res, 500, { error: error.message }); }
   });
-  return { server, code, port, directory };
+  return { server, code, port, pendingDirectory, receivedDirectory };
 }
 
 module.exports = { createTransferServer, localAddresses, safeName, uniquePath, PORT, MAX_FILE_BYTES };
