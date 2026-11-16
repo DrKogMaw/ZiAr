@@ -8,7 +8,7 @@ Requires Node.js 20 or newer. In this folder, run `npm install` and `npm start`.
 
 Windows may ask to permit ZiAr through the firewall. Allow it on **private networks** so the phone can discover and connect to the PC. Keep the Windows app open for transfers.
 
-The Windows app shows currently connected devices. Choose **One device** to allow only one paired phone at a time, or **Multiple devices** to allow more. The choice is saved for the next launch. Switching from multiple to one disconnects all but the most recently active device. A device disappears from the connected list after about 20 seconds without activity.
+The Windows app shows currently connected devices. Choose **One device** to allow only one paired phone at a time, or **Multiple devices** to allow more. The choice is saved for the next launch. Switching from multiple to one disconnects all but the most recently active device. A device disappears from the connected list after about 20 seconds without activity, but can still send after returning from Android's file picker. Pairing expires after 12 hours without activity or when the PC app closes.
 
 ## Android
 

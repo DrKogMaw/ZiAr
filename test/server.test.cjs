@@ -38,6 +38,34 @@ test('PC shows connected devices and enforces one-device or multiple-device pair
   assert.deepEqual(statuses.sort(), [200, 401]);
 });
 
+test('a phone can finish choosing files after its presence indicator times out', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-test-'));
+  let clock = 100000;
+  const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory: path.join(root, 'received'), port: 0, code: '123456', now: () => clock,
+    isDesktopRequest: (_peer, request) => request.headers['x-test-desktop'] === 'yes' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const pair = id => fetch(base + '/api/pair', { method: 'POST', body: JSON.stringify({ code: '123456', deviceId: id, deviceName: id }) });
+  const first = await pair('device-one');
+  const firstCookie = first.headers.get('set-cookie').split(';')[0];
+  clock += 21000;
+  const devices = await (await fetch(base + '/api/devices', { headers: { 'X-Test-Desktop': 'yes' } })).json();
+  assert.equal(devices.devices.length, 0);
+  const upload = await fetch(base + '/api/upload?name=selected.txt', { method: 'POST', headers: { Cookie: firstCookie }, body: 'selected' });
+  assert.equal(upload.status, 201);
+  assert.equal(fs.readFileSync(path.join(root, 'received', 'selected.txt'), 'utf8'), 'selected');
+  const chunkedStatus = await new Promise((resolve, reject) => {
+    const request = http.request(base + '/api/upload?name=chunked.txt', { method: 'POST', headers: { Cookie: firstCookie } }, response => { resolve(response.statusCode); response.resume(); });
+    request.on('error', reject); request.write('from '); request.end('Android');
+  });
+  assert.equal(chunkedStatus, 201);
+  assert.equal(fs.readFileSync(path.join(root, 'received', 'chunked.txt'), 'utf8'), 'from Android');
+  clock += 21000;
+  assert.equal((await pair('device-two')).status, 200);
+  assert.equal((await fetch(base + '/api/files', { headers: { Cookie: firstCookie } })).status, 401);
+});
+
 test('PC sends once to phone, and phone saves received files without a shared history', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-test-'));
   const pendingDirectory = path.join(root, 'pending');

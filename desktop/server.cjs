@@ -8,6 +8,7 @@ const PORT = 47831;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const MAX_FILES = 1000;
 const SESSION_IDLE_MS = 20000;
+const SESSION_AUTH_MS = 12 * 60 * 60 * 1000;
 const INDEX = fs.readFileSync(path.join(__dirname, 'index.html'));
 
 function localAddresses() {
@@ -30,16 +31,16 @@ function isLoopback(peer) {
   return peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
 }
 
-function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback, initialMode = 'single', onModeChange = () => {} }) {
+function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback, initialMode = 'single', onModeChange = () => {}, now = Date.now }) {
   fs.mkdirSync(pendingDirectory, { recursive: true });
   fs.mkdirSync(receivedDirectory, { recursive: true });
   let mode = initialMode === 'multiple' ? 'multiple' : 'single';
   const sessions = new Map();
   const attempts = new Map();
   const pruneSessions = () => {
-    for (const [token, device] of sessions) if (Date.now() - device.lastSeen > SESSION_IDLE_MS) sessions.delete(token);
+    for (const [token, device] of sessions) if (now() - device.lastSeen > SESSION_AUTH_MS) sessions.delete(token);
   };
-  const activeDevices = () => [...sessions.values()].sort((a, b) => b.lastSeen - a.lastSeen);
+  const activeDevices = () => [...sessions.values()].filter(device => now() - device.lastSeen <= SESSION_IDLE_MS).sort((a, b) => b.lastSeen - a.lastSeen);
   const sendJson = (res, status, value) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(value));
@@ -53,7 +54,7 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
       const session = /(?:^|; )ziar=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
       const device = session && sessions.get(session);
       const authorized = loopback || !!device;
-      if (device) device.lastSeen = Date.now();
+      if (device) device.lastSeen = now();
       if (req.method === 'GET' && url.pathname === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(INDEX);
@@ -79,9 +80,9 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
         const deviceId = typeof pairing.deviceId === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(pairing.deviceId) ? pairing.deviceId : `legacy-${peer}`;
         const deviceName = typeof pairing.deviceName === 'string' ? pairing.deviceName.replace(/[\x00-\x1f]/g, '').slice(0, 40) || 'Android device' : 'Android device';
         if (mode === 'single' && activeDevices().some(active => active.id !== deviceId)) return sendJson(res, 409, { error: 'Another device is connected. Ask the PC to choose Multiple devices or wait for it to disconnect.' });
-        for (const [oldToken, active] of sessions) if (active.id === deviceId) sessions.delete(oldToken);
+        for (const [oldToken, active] of sessions) if (mode === 'single' || active.id === deviceId) sessions.delete(oldToken);
         const token = crypto.randomBytes(32).toString('hex');
-        sessions.set(token, { id: deviceId, name: deviceName, address: peer, lastSeen: Date.now() });
+        sessions.set(token, { id: deviceId, name: deviceName, address: peer, lastSeen: now() });
         res.setHeader('Set-Cookie', `ziar=${token}; HttpOnly; SameSite=Strict; Path=/`);
         return sendJson(res, 200, { ok: true });
       }
@@ -101,7 +102,7 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
         if (selection !== mode) onModeChange(selection);
         mode = selection;
         if (mode === 'single' && sessions.size > 1) {
-          const keep = activeDevices()[0];
+          const keep = [...sessions.values()].sort((a, b) => b.lastSeen - a.lastSeen)[0];
           for (const [token, active] of sessions) if (active !== keep) sessions.delete(token);
         }
         return sendJson(res, 200, { mode });
@@ -117,7 +118,7 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
       if (req.method === 'POST' && url.pathname === '/api/upload') {
         const name = url.searchParams.get('name');
         const length = Number(req.headers['content-length']);
-        if (!name || !Number.isFinite(length) || length < 0 || length > MAX_FILE_BYTES) return sendJson(res, 413, { error: 'File must be 1 GB or smaller.' });
+        if (!name || (!Number.isNaN(length) && (!Number.isFinite(length) || length < 0 || length > MAX_FILE_BYTES))) return sendJson(res, 413, { error: 'File must be 1 GB or smaller.' });
         const destination = loopback ? pendingDirectory : receivedDirectory;
         if (loopback && fs.readdirSync(pendingDirectory).length >= MAX_FILES) return sendJson(res, 507, { error: 'Too many files waiting for the phone.' });
         const target = uniquePath(destination, name);
@@ -127,11 +128,11 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
           const output = fs.createWriteStream(temp, { flags: 'wx' });
           for await (const chunk of req) {
             bytes += chunk.length;
-            if (bytes > MAX_FILE_BYTES || bytes > length) throw new Error('File exceeds the size limit.');
+            if (bytes > MAX_FILE_BYTES || (!Number.isNaN(length) && bytes > length)) throw new Error('File exceeds the size limit.');
             if (!output.write(chunk)) await new Promise(resolve => output.once('drain', resolve));
           }
           await new Promise((resolve, reject) => output.end(error => error ? reject(error) : resolve()));
-          if (bytes !== length) throw new Error('Incomplete upload.');
+          if (!Number.isNaN(length) && bytes !== length) throw new Error('Incomplete upload.');
           fs.renameSync(temp, target);
           return sendJson(res, 201, { name: path.basename(target), received: !loopback });
         } catch (error) {
