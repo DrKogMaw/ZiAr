@@ -1,12 +1,15 @@
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('node:path');
 const { createTransferServer, PORT } = require('./server.cjs');
+const { startDiscovery } = require('./discovery.cjs');
 
 let transfer;
 let window;
+let stopDiscovery;
 app.whenReady().then(() => {
   transfer = createTransferServer({ directory: path.join(app.getPath('documents'), 'ZiAr Shared') });
   transfer.server.listen(PORT, '0.0.0.0', () => {
+    stopDiscovery = startDiscovery();
     window = new BrowserWindow({ width: 1000, height: 760, minWidth: 680, minHeight: 500, title: 'ZiAr',
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
     window.loadURL(`http://127.0.0.1:${PORT}/`);
@@ -17,4 +20,4 @@ app.whenReady().then(() => {
   });
 });
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => transfer?.server.close());
+app.on('before-quit', () => { stopDiscovery?.(); transfer?.server.close(); });

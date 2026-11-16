@@ -5,6 +5,12 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { createTransferServer, safeName } = require('../desktop/server.cjs');
+const { broadcastAddresses, MESSAGE } = require('../desktop/discovery.cjs');
+
+test('advertises a marker without the pairing code on local broadcasts', () => {
+  assert.equal(MESSAGE.toString(), 'ZIAR/1');
+  assert.deepEqual(broadcastAddresses({ wifi: [{ family: 'IPv4', internal: false, address: '192.168.1.9', netmask: '255.255.255.0' }] }), ['255.255.255.255', '192.168.1.255']);
+});
 
 test('upload, list, download, and duplicate filenames', async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-test-'));
