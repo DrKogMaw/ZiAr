@@ -59,7 +59,19 @@ class MainActivity : Activity() {
                 override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
                     chooser?.onReceiveValue(null)
                     chooser = callback
-                    startActivityForResult(params.createIntent(), chooserRequest)
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    try {
+                        startActivityForResult(Intent.createChooser(intent, "Choose files"), chooserRequest)
+                    } catch (e: Exception) {
+                        chooser?.onReceiveValue(null)
+                        chooser = null
+                        Toast.makeText(this@MainActivity, "Could not open the file picker.", Toast.LENGTH_LONG).show()
+                    }
                     return true
                 }
             }
@@ -129,7 +141,17 @@ class MainActivity : Activity() {
     private fun showSetup(search: Boolean) { setup.visibility = View.VISIBLE; web.visibility = View.GONE; if (search) startDiscovery() }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == chooserRequest) { chooser?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data)); chooser = null }
+        if (requestCode == chooserRequest) {
+            val files = mutableListOf<Uri>()
+            if (resultCode == RESULT_OK) {
+                data?.clipData?.let { selected ->
+                    for (i in 0 until selected.itemCount) files.add(selected.getItemAt(i).uri)
+                }
+                data?.data?.let { files.add(it) }
+            }
+            chooser?.onReceiveValue(files.distinct().takeIf { it.isNotEmpty() }?.toTypedArray())
+            chooser = null
+        }
     }
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() { if (web.visibility == View.VISIBLE) showSetup(true) else super.onBackPressed() }
