@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const PORT = 47831;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const MAX_FILES = 1000;
+const SESSION_IDLE_MS = 20000;
 const INDEX = fs.readFileSync(path.join(__dirname, 'index.html'));
 
 function localAddresses() {
@@ -29,11 +30,16 @@ function isLoopback(peer) {
   return peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
 }
 
-function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback }) {
+function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback, initialMode = 'single', onModeChange = () => {} }) {
   fs.mkdirSync(pendingDirectory, { recursive: true });
   fs.mkdirSync(receivedDirectory, { recursive: true });
-  const sessions = new Set();
+  let mode = initialMode === 'multiple' ? 'multiple' : 'single';
+  const sessions = new Map();
   const attempts = new Map();
+  const pruneSessions = () => {
+    for (const [token, device] of sessions) if (Date.now() - device.lastSeen > SESSION_IDLE_MS) sessions.delete(token);
+  };
+  const activeDevices = () => [...sessions.values()].sort((a, b) => b.lastSeen - a.lastSeen);
   const sendJson = (res, status, value) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(value));
@@ -42,9 +48,12 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
     try {
       const url = new URL(req.url, 'http://localhost');
       const peer = req.socket.remoteAddress || '';
-      const loopback = isDesktopRequest(peer);
+      const loopback = isDesktopRequest(peer, req);
+      pruneSessions();
       const session = /(?:^|; )ziar=([a-f0-9]{64})(?:;|$)/.exec(req.headers.cookie || '')?.[1];
-      const authorized = loopback || (session && sessions.has(session));
+      const device = session && sessions.get(session);
+      const authorized = loopback || !!device;
+      if (device) device.lastSeen = Date.now();
       if (req.method === 'GET' && url.pathname === '/') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
         return res.end(INDEX);
@@ -55,21 +64,48 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
         let input = '';
         for await (const chunk of req) {
           input += chunk;
-          if (input.length > 128) return sendJson(res, 413, { error: 'Invalid code.' });
+          if (input.length > 512) return sendJson(res, 413, { error: 'Invalid pairing request.' });
         }
-        if (input.trim() !== code) {
+        let pairing;
+        try { pairing = JSON.parse(input); } catch { /* Older clients send the code as plain text. */ }
+        if (!pairing || typeof pairing !== 'object') pairing = { code: input.trim(), deviceId: `legacy-${peer}`, deviceName: 'Android device' };
+        if (pairing.code !== code) {
           prior.count++;
           if (prior.count >= 5) { prior.count = 0; prior.until = Date.now() + 60000; }
           attempts.set(peer, prior);
           return sendJson(res, 401, { error: 'Incorrect pairing code.' });
         }
         attempts.delete(peer);
+        const deviceId = typeof pairing.deviceId === 'string' && /^[a-zA-Z0-9_-]{8,80}$/.test(pairing.deviceId) ? pairing.deviceId : `legacy-${peer}`;
+        const deviceName = typeof pairing.deviceName === 'string' ? pairing.deviceName.replace(/[\x00-\x1f]/g, '').slice(0, 40) || 'Android device' : 'Android device';
+        if (mode === 'single' && activeDevices().some(active => active.id !== deviceId)) return sendJson(res, 409, { error: 'Another device is connected. Ask the PC to choose Multiple devices or wait for it to disconnect.' });
+        for (const [oldToken, active] of sessions) if (active.id === deviceId) sessions.delete(oldToken);
         const token = crypto.randomBytes(32).toString('hex');
-        sessions.add(token);
+        sessions.set(token, { id: deviceId, name: deviceName, address: peer, lastSeen: Date.now() });
         res.setHeader('Set-Cookie', `ziar=${token}; HttpOnly; SameSite=Strict; Path=/`);
         return sendJson(res, 200, { ok: true });
       }
       if (!authorized) return sendJson(res, 401, { error: 'Pair with your PC first.' });
+      if (url.pathname === '/api/devices' && req.method === 'GET') {
+        if (!loopback) return sendJson(res, 403, { error: 'PC only.' });
+        return sendJson(res, 200, { mode, devices: activeDevices().map(({ name, address, lastSeen }) => ({ name, address, lastSeen })) });
+      }
+      if (url.pathname === '/api/mode' && req.method === 'POST') {
+        if (!loopback) return sendJson(res, 403, { error: 'PC only.' });
+        let selection = '';
+        for await (const chunk of req) {
+          selection += chunk;
+          if (selection.length > 16) return sendJson(res, 400, { error: 'Invalid mode.' });
+        }
+        if (selection !== 'single' && selection !== 'multiple') return sendJson(res, 400, { error: 'Invalid mode.' });
+        if (selection !== mode) onModeChange(selection);
+        mode = selection;
+        if (mode === 'single' && sessions.size > 1) {
+          const keep = activeDevices()[0];
+          for (const [token, active] of sessions) if (active !== keep) sessions.delete(token);
+        }
+        return sendJson(res, 200, { mode });
+      }
       if (req.method === 'GET' && url.pathname === '/api/info') return sendJson(res, 200, { name: os.hostname(), addresses: localAddresses(), port, local: loopback, receivedDirectory: loopback ? receivedDirectory : undefined, code: loopback ? code : undefined });
       if (req.method === 'GET' && url.pathname === '/api/files') {
         const files = fs.readdirSync(pendingDirectory, { withFileTypes: true }).filter(f => f.isFile() && !f.name.endsWith('.part')).map(f => {

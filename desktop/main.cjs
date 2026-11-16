@@ -11,7 +11,11 @@ let stopDiscovery;
 let pendingDirectory;
 app.whenReady().then(() => {
   pendingDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-session-'));
-  transfer = createTransferServer({ pendingDirectory, receivedDirectory: path.join(app.getPath('downloads'), 'ZiAr Received') });
+  const settingsPath = path.join(app.getPath('userData'), 'settings.json');
+  let initialMode = 'single';
+  try { initialMode = JSON.parse(fs.readFileSync(settingsPath, 'utf8')).deviceMode; } catch { /* First launch. */ }
+  transfer = createTransferServer({ pendingDirectory, receivedDirectory: path.join(app.getPath('downloads'), 'ZiAr Received'),
+    initialMode, onModeChange: deviceMode => fs.writeFileSync(settingsPath, JSON.stringify({ deviceMode }), 'utf8') });
   ipcMain.handle('ziar:open-received-folder', event => {
     if (event.sender !== window?.webContents || event.senderFrame?.url !== `http://127.0.0.1:${PORT}/`) return 'Unavailable.';
     return shell.openPath(transfer.receivedDirectory);

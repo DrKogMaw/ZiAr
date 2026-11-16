@@ -8,6 +8,8 @@ Requires Node.js 20 or newer. In this folder, run `npm install` and `npm start`.
 
 Windows may ask to permit ZiAr through the firewall. Allow it on **private networks** so the phone can discover and connect to the PC. Keep the Windows app open for transfers.
 
+The Windows app shows currently connected devices. Choose **One device** to allow only one paired phone at a time, or **Multiple devices** to allow more. The choice is saved for the next launch. Switching from multiple to one disconnects all but the most recently active device. A device disappears from the connected list after about 20 seconds without activity.
+
 ## Android
 
 Open `android/` in Android Studio (Ladybug or newer), let it sync Gradle, and run the `app` module on Android 8.0 or newer. An Android SDK is needed to build the APK. The app searches for the Windows PC on the same Wi-Fi. Once found, enter the six-digit code displayed on Windows. If the network blocks discovery, enter one of the PC's displayed IPv4 addresses manually. Android downloads go to Downloads.

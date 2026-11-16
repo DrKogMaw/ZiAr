@@ -12,6 +12,32 @@ test('advertises a marker without the pairing code on local broadcasts', () => {
   assert.deepEqual(broadcastAddresses({ wifi: [{ family: 'IPv4', internal: false, address: '192.168.1.9', netmask: '255.255.255.0' }] }), ['255.255.255.255', '192.168.1.255']);
 });
 
+test('PC shows connected devices and enforces one-device or multiple-device pairing', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-test-'));
+  const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory: path.join(root, 'received'), port: 0, code: '123456',
+    isDesktopRequest: (_peer, request) => request.headers['x-test-desktop'] === 'yes' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const pcHeaders = { 'X-Test-Desktop': 'yes' };
+  const pair = id => fetch(base + '/api/pair', { method: 'POST', body: JSON.stringify({ code: '123456', deviceId: id, deviceName: id }) });
+  const first = await pair('device-one');
+  const firstCookie = first.headers.get('set-cookie').split(';')[0];
+  assert.equal(first.status, 200);
+  assert.equal((await pair('device-two')).status, 409);
+  assert.equal((await (await fetch(base + '/api/devices', { headers: pcHeaders })).json()).devices.length, 1);
+  assert.equal((await fetch(base + '/api/devices', { headers: { Cookie: firstCookie } })).status, 403);
+  assert.equal((await fetch(base + '/api/mode', { method: 'POST', headers: pcHeaders, body: 'multiple' })).status, 200);
+  const second = await pair('device-two');
+  const secondCookie = second.headers.get('set-cookie').split(';')[0];
+  assert.equal(second.status, 200);
+  assert.equal((await (await fetch(base + '/api/devices', { headers: pcHeaders })).json()).devices.length, 2);
+  assert.equal((await fetch(base + '/api/mode', { method: 'POST', headers: pcHeaders, body: 'single' })).status, 200);
+  assert.equal((await (await fetch(base + '/api/devices', { headers: pcHeaders })).json()).devices.length, 1);
+  const statuses = await Promise.all([firstCookie, secondCookie].map(cookie => fetch(base + '/api/files', { headers: { Cookie: cookie } }).then(response => response.status)));
+  assert.deepEqual(statuses.sort(), [200, 401]);
+});
+
 test('PC sends once to phone, and phone saves received files without a shared history', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-test-'));
   const pendingDirectory = path.join(root, 'pending');
