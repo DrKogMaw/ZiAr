@@ -15,12 +15,23 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - run: gradle testDebugUnitTest assembleDebug
+      - name: Prepare Android signing
+        shell: bash
+        env:
+          ZIAR_SIGNING_KEYSTORE_B64: ${{ secrets.ZIAR_SIGNING_KEYSTORE_B64 }}
+          ZIAR_SIGNING_PASSWORD: ${{ secrets.ZIAR_SIGNING_PASSWORD }}
+        run: |
+          test -n "$ZIAR_SIGNING_KEYSTORE_B64" && test -n "$ZIAR_SIGNING_PASSWORD"
+          printf '%s' "$ZIAR_SIGNING_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ziar-android.p12"
+          echo "ZIAR_SIGNING_STORE=$RUNNER_TEMP/ziar-android.p12" >> "$GITHUB_ENV"
+      - run: gradle testDebugUnitTest assembleRelease
         working-directory: android
+        env:
+          ZIAR_SIGNING_PASSWORD: ${{ secrets.ZIAR_SIGNING_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ZiAr-Android-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: ZiAr-Android
+          path: android/app/build/outputs/apk/release/app-release.apk
   windows:
     runs-on: windows-latest
     steps:

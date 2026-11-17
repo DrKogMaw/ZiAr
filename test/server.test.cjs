@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { createTransferServer, safeName } = require('../desktop/server.cjs');
+const { createUpdateSource } = require('../desktop/updates.cjs');
 const { broadcastAddresses, MESSAGE } = require('../desktop/discovery.cjs');
 
 test('advertises a marker without the pairing code on local broadcasts', () => {
@@ -64,6 +65,29 @@ test('a phone can finish choosing files after its presence indicator times out',
   clock += 21000;
   assert.equal((await pair('device-two')).status, 200);
   assert.equal((await fetch(base + '/api/files', { headers: { Cookie: firstCookie } })).status, 401);
+});
+
+test('paired phones can fetch only the Android update hosted on the PC', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-update-test-'));
+  const apks = path.join(root, 'APKs');
+  const exes = path.join(root, 'EXEs');
+  fs.mkdirSync(apks); fs.mkdirSync(exes);
+  const bytes = Buffer.alloc(2048, 9);
+  fs.writeFileSync(path.join(apks, 'ZiAr-Android-0.3.0.apk'), bytes);
+  const updates = createUpdateSource({ apkDirectory: apks, exeDirectory: exes, currentVersion: '0.3.0' });
+  const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory: path.join(root, 'received'), port: 0, code: '123456', updates,
+    isDesktopRequest: (_peer, request) => request.headers['x-test-desktop'] === 'yes' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await fetch(base + '/api/update/android')).status, 401);
+  const pair = await fetch(base + '/api/pair', { method: 'POST', body: '123456' });
+  const headers = { Cookie: pair.headers.get('set-cookie').split(';')[0] };
+  assert.equal((await fetch(base + '/api/updates', { headers })).status, 403);
+  const info = await (await fetch(base + '/api/update/android', { headers })).json();
+  assert.equal(info.version, '0.3.0');
+  assert.equal(info.size, bytes.length);
+  assert.deepEqual(Buffer.from(await (await fetch(base + '/api/update/android.apk', { headers })).arrayBuffer()), bytes);
 });
 
 test('PC sends once to phone, and phone saves received files without a shared history', async t => {

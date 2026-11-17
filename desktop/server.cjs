@@ -31,7 +31,7 @@ function isLoopback(peer) {
   return peer === '127.0.0.1' || peer === '::1' || peer === '::ffff:127.0.0.1';
 }
 
-function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback, initialMode = 'single', onModeChange = () => {}, now = Date.now }) {
+function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT, code = String(crypto.randomInt(100000, 1000000)), isDesktopRequest = isLoopback, initialMode = 'single', onModeChange = () => {}, now = Date.now, updates = null }) {
   fs.mkdirSync(pendingDirectory, { recursive: true });
   fs.mkdirSync(receivedDirectory, { recursive: true });
   let mode = initialMode === 'multiple' ? 'multiple' : 'single';
@@ -87,6 +87,23 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
         return sendJson(res, 200, { ok: true });
       }
       if (!authorized) return sendJson(res, 401, { error: 'Pair with your PC first.' });
+      if (url.pathname === '/api/updates' && req.method === 'GET') {
+        if (!loopback) return sendJson(res, 403, { error: 'PC only.' });
+        return sendJson(res, 200, { currentWindowsVersion: updates?.currentVersion || null,
+          windowsVersion: updates?.windows()?.version || null, androidVersion: updates?.android()?.version || null,
+          exeDirectory: updates?.exeDirectory || null, apkDirectory: updates?.apkDirectory || null });
+      }
+      if (url.pathname === '/api/update/android' && req.method === 'GET') {
+        const update = updates?.android();
+        return sendJson(res, 200, update ? { available: true, version: update.version, size: update.size, sha256: update.sha256 } : { available: false });
+      }
+      if (url.pathname === '/api/update/android.apk' && req.method === 'GET') {
+        const update = updates?.android();
+        if (!update) return sendJson(res, 404, { error: 'Android update not found on the PC.' });
+        res.writeHead(200, { 'Content-Type': 'application/vnd.android.package-archive', 'Content-Length': update.size,
+          'Content-Disposition': `attachment; filename="ZiAr-Android-${update.version}.apk"`, 'Cache-Control': 'no-store' });
+        return fs.createReadStream(update.file).pipe(res);
+      }
       if (url.pathname === '/api/devices' && req.method === 'GET') {
         if (!loopback) return sendJson(res, 403, { error: 'PC only.' });
         return sendJson(res, 200, { mode, devices: activeDevices().map(({ name, address, lastSeen }) => ({ name, address, lastSeen })) });

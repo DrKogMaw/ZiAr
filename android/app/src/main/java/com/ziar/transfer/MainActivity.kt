@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private lateinit var peerList: LinearLayout
     private lateinit var manualPeerAddress: EditText
     private var peerService: PhonePeerService? = null
+    private val updater by lazy { PcUpdateManager(this) }
     private var phoneMode = false
     private var chosenPeerAddress: String? = null
     private var chosenPeerCode: String? = null
@@ -126,6 +127,7 @@ class MainActivity : Activity() {
         val modes = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         modes.addView(Button(this).apply { text = "Windows PC"; setOnClickListener { showPcMode() } }, LinearLayout.LayoutParams(0, -2, 1f))
         modes.addView(Button(this).apply { text = "Phone to phone"; setOnClickListener { showPhoneMode() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        modes.addView(Button(this).apply { text = "Update"; setOnClickListener { updater.check(currentHost()) } }, LinearLayout.LayoutParams(0, -2, 1f))
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(modes); addView(pcPanel, LinearLayout.LayoutParams(-1, 0, 1f)); addView(phonePanel, LinearLayout.LayoutParams(-1, 0, 1f)) }
         setContentView(root)
         address.setText(getPreferences(0).getString("host", ""))
@@ -405,6 +407,8 @@ class MainActivity : Activity() {
                     if (done != null) Toast.makeText(this, message, if (done) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
                 }
             }
+        } else if (requestCode == PcUpdateManager.SETTINGS_REQUEST) {
+            updater.returnedFromSettings()
         }
     }
     @Deprecated("Deprecated in Java")
