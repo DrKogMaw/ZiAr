@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.OpenableColumns
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -26,7 +27,9 @@ import java.net.DatagramSocket
 import java.net.SocketTimeoutException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.io.IOException
 import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : Activity() {
     private var chooser: ValueCallback<Array<Uri>>? = null
@@ -106,6 +109,68 @@ class MainActivity : Activity() {
     }
 
     private fun currentHost() = getPreferences(0).getString("host", "") ?: ""
+    private fun selectedName(uri: Uri): String {
+        val name = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+        return name?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "file"
+    }
+    private fun uploadStatus(message: String, completed: Boolean? = null) {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            val style = when (completed) { true -> "success small"; false -> "error small"; null -> "small" }
+            web.evaluateJavascript("(function(){var m=document.getElementById('message');if(m){m.textContent=${JSONObject.quote(message)};m.className='$style';}})()", null)
+            if (completed != null) Toast.makeText(this, message, if (completed) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+        }
+    }
+    private fun uploadSelectedFiles(files: List<Uri>) {
+        val host = currentHost()
+        val cookie = CookieManager.getInstance().getCookie("http://$host:47831/")
+        if (cookie.isNullOrBlank()) { uploadStatus("Pair your phone with the PC again.", false); return }
+        Thread {
+            for ((index, uri) in files.withIndex()) {
+                var connection: HttpURLConnection? = null
+                try {
+                    val name = selectedName(uri)
+                    uploadStatus("Sending ${index + 1} of ${files.size}: $name")
+                    val url = Uri.parse("http://$host:47831/api/upload").buildUpon().appendQueryParameter("name", name).build().toString()
+                    val active = (URL(url).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        doOutput = true
+                        connectTimeout = 10000
+                        readTimeout = 30000
+                        setRequestProperty("Cookie", cookie)
+                        setRequestProperty("Content-Type", "application/octet-stream")
+                        setChunkedStreamingMode(64 * 1024)
+                    }
+                    connection = active
+                    val input = contentResolver.openInputStream(uri) ?: throw IOException("Could not read the selected file.")
+                    input.use { source ->
+                        active.outputStream.use { destination ->
+                            val buffer = ByteArray(64 * 1024)
+                            var count = 0L
+                            while (true) {
+                                val length = source.read(buffer)
+                                if (length < 0) break
+                                count += length
+                                if (count > 1024L * 1024 * 1024) throw IOException("File is larger than 1 GB.")
+                                destination.write(buffer, 0, length)
+                            }
+                        }
+                    }
+                    if (active.responseCode != 201) {
+                        val response = active.errorStream?.bufferedReader()?.use { it.readText() }
+                        val reason = try { JSONObject(response ?: "").optString("error") } catch (_: Exception) { "" }
+                        throw IOException(reason.ifBlank { "PC rejected the file (${active.responseCode})." })
+                    }
+                } catch (error: Exception) {
+                    uploadStatus("Could not send file ${index + 1}: ${error.message ?: "Unknown error"}", false)
+                    return@Thread
+                } finally { connection?.disconnect() }
+            }
+            uploadStatus("Sent ${files.size} file${if (files.size == 1) "" else "s"} to your PC.", true)
+        }.start()
+    }
     private fun queueDownload(name: String, userAgent: String = web.settings.userAgentString): Boolean {
         return try {
             val url = Uri.parse("http://${currentHost()}:47831/api/download").buildUpon().appendQueryParameter("name", name).build()
@@ -202,8 +267,10 @@ class MainActivity : Activity() {
                 }
                 data?.data?.let { files.add(it) }
             }
-            chooser?.onReceiveValue(files.distinct().takeIf { it.isNotEmpty() }?.toTypedArray())
+            chooser?.onReceiveValue(null)
             chooser = null
+            if (files.isEmpty()) Toast.makeText(this, "No files were selected.", Toast.LENGTH_SHORT).show()
+            else uploadSelectedFiles(files.distinct())
         }
     }
     @Deprecated("Deprecated in Java")
