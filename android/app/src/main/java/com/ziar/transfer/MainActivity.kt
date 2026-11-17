@@ -6,7 +6,12 @@ import android.app.DownloadManager
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +22,7 @@ import android.provider.OpenableColumns
 import android.text.InputType
 import android.text.InputFilter
 import android.view.View
+import android.view.Gravity
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
 import android.webkit.ValueCallback
@@ -29,6 +35,9 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.SocketTimeoutException
@@ -51,6 +60,8 @@ class MainActivity : Activity() {
     private lateinit var peerAddresses: TextView
     private lateinit var peerList: LinearLayout
     private lateinit var manualPeerAddress: EditText
+    private lateinit var pcTab: Button
+    private lateinit var phoneTab: Button
     private var peerService: PhonePeerService? = null
     private val updater by lazy { PcUpdateManager(this) }
     private var phoneMode = false
@@ -75,7 +86,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 48, 32, 24) }
+        window.statusBarColor = Color.rgb(11, 16, 32)
+        window.navigationBarColor = Color.rgb(11, 16, 32)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        setup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(32), dp(24), dp(24)) }
         discoveryStatus = TextView(this).apply { text = "Searching for your Windows PC on Wi-Fi…"; textSize = 18f }
         address = EditText(this).apply { hint = "PC address, e.g. 192.168.1.5"; inputType = android.text.InputType.TYPE_CLASS_TEXT }
         val connect = Button(this).apply { text = "Connect to PC"; setOnClickListener { connect() } }
@@ -124,15 +138,99 @@ class MainActivity : Activity() {
         }
         pcPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(setup); addView(web, LinearLayout.LayoutParams(-1, 0, 1f)) }
         phonePanel = buildPhonePanel().apply { visibility = View.GONE }
-        val modes = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        modes.addView(Button(this).apply { text = "Windows PC"; setOnClickListener { showPcMode() } }, LinearLayout.LayoutParams(0, -2, 1f))
-        modes.addView(Button(this).apply { text = "Phone to phone"; setOnClickListener { showPhoneMode() } }, LinearLayout.LayoutParams(0, -2, 1f))
-        modes.addView(Button(this).apply { text = "Update"; setOnClickListener { updater.check(currentHost()) } }, LinearLayout.LayoutParams(0, -2, 1f))
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(modes); addView(pcPanel, LinearLayout.LayoutParams(-1, 0, 1f)); addView(phonePanel, LinearLayout.LayoutParams(-1, 0, 1f)) }
+        val header = buildHeader()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(11, 16, 32))
+            addView(header)
+            addView(pcPanel, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(phonePanel, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(0, bars.top, 0, maxOf(bars.bottom, keyboard.bottom))
+            insets
+        }
         setContentView(root)
+        updateModeTabs()
         address.setText(getPreferences(0).getString("host", ""))
         showSetup(true)
         pollHandler.post(pollTask)
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun shape(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+    }
+
+    private fun touchSurface(color: Int, radius: Int) = RippleDrawable(
+        ColorStateList.valueOf(Color.argb(50, 255, 255, 255)), shape(color, radius), shape(Color.WHITE, radius)
+    )
+
+    private fun buildHeader(): LinearLayout {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), dp(14))
+            setBackgroundColor(Color.rgb(21, 30, 52))
+        }
+        val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        titleRow.addView(TextView(this).apply {
+            text = "ZiAr"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(0, dp(52), 1f).apply { gravity = Gravity.CENTER_VERTICAL })
+        titleRow.addView(Button(this).apply {
+            text = "Update"
+            isAllCaps = false
+            textSize = 14f
+            setTextColor(Color.rgb(6, 20, 38))
+            typeface = Typeface.DEFAULT_BOLD
+            backgroundTintList = null
+            background = touchSurface(Color.rgb(141, 213, 255), 12)
+            minHeight = dp(48)
+            minWidth = dp(92)
+            setPadding(dp(16), 0, dp(16), 0)
+            contentDescription = "Check for Android updates"
+            setOnClickListener { updater.check(currentHost()) }
+        }, LinearLayout.LayoutParams(-2, dp(48)))
+        header.addView(titleRow)
+
+        val tabs = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            background = shape(Color.rgb(11, 16, 32), 15)
+        }
+        pcTab = modeTab("Windows PC") { showPcMode() }
+        phoneTab = modeTab("Phone to phone") { showPhoneMode() }
+        tabs.addView(pcTab, LinearLayout.LayoutParams(0, dp(48), 1f))
+        tabs.addView(phoneTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(8) })
+        header.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        return header
+    }
+
+    private fun modeTab(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        isAllCaps = false
+        textSize = 14f
+        typeface = Typeface.DEFAULT_BOLD
+        minHeight = dp(48)
+        setPadding(dp(8), 0, dp(8), 0)
+        backgroundTintList = null
+        stateListAnimator = null
+        setOnClickListener { action() }
+    }
+
+    private fun updateModeTabs() {
+        for ((button, active) in listOf(pcTab to !phoneMode, phoneTab to phoneMode)) {
+            button.isSelected = active
+            button.setTextColor(if (active) Color.rgb(6, 20, 38) else Color.rgb(185, 214, 255))
+            button.background = touchSurface(if (active) Color.rgb(141, 213, 255) else Color.rgb(11, 16, 32), 11)
+        }
     }
 
     private fun currentHost() = getPreferences(0).getString("host", "") ?: ""
@@ -167,6 +265,7 @@ class MainActivity : Activity() {
     private fun showPhoneMode() {
         if (phoneMode) return
         phoneMode = true
+        updateModeTabs()
         stopDiscovery()
         pcPanel.visibility = View.GONE
         phonePanel.visibility = View.VISIBLE
@@ -185,6 +284,7 @@ class MainActivity : Activity() {
     private fun showPcMode() {
         if (!phoneMode) return
         phoneMode = false
+        updateModeTabs()
         peerService?.stop(); peerService = null
         chosenPeerAddress = null; chosenPeerCode = null
         phonePanel.visibility = View.GONE
