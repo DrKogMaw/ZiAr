@@ -25,6 +25,12 @@ adb exec-out screencap -p > ui-preview/nearby.png
 adb shell settings put system font_scale 1.3
 adb shell am force-stop com.ziar.transfer
 adb shell am start -n com.ziar.transfer/.MainActivity
-sleep 3
+for attempt in 1 2 3 4 5 6 7 8; do
+    adb shell uiautomator dump /sdcard/large-window.xml >/dev/null 2>&1 || true
+    adb pull /sdcard/large-window.xml ui-preview/large-window.xml >/dev/null 2>&1 || true
+    if grep -q 'Find your PC' ui-preview/large-window.xml; then break; fi
+    sleep 2
+done
+grep -q 'Find your PC' ui-preview/large-window.xml
 adb exec-out screencap -p > ui-preview/find-pc-large-text.png
 adb shell settings put system font_scale 1.0
