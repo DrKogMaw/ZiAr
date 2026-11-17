@@ -34,13 +34,22 @@ function newestFile(directory, pattern) {
 }
 
 function createUpdateSource({ apkDirectory = APK_DIRECTORY, exeDirectory = EXE_DIRECTORY, currentVersion }) {
+  let cachedApk = null;
   function android() {
     const update = newestFile(apkDirectory, /^ZiAr-Android-(\d+\.\d+\.\d+)\.apk$/i);
     if (!update) return null;
     const stat = fs.statSync(update.file);
     if (!stat.isFile() || stat.size < 1024 || stat.size > MAX_APK_BYTES) return null;
-    const sha256 = crypto.createHash('sha256').update(fs.readFileSync(update.file)).digest('hex');
-    return { ...update, size: stat.size, sha256 };
+    if (cachedApk?.file === update.file && cachedApk.size === stat.size && cachedApk.mtimeMs === stat.mtimeMs) return cachedApk;
+    const hash = crypto.createHash('sha256');
+    const file = fs.openSync(update.file, 'r');
+    try {
+      const chunk = Buffer.allocUnsafe(64 * 1024);
+      let count;
+      while ((count = fs.readSync(file, chunk, 0, chunk.length, null)) > 0) hash.update(chunk.subarray(0, count));
+    } finally { fs.closeSync(file); }
+    cachedApk = { ...update, size: stat.size, mtimeMs: stat.mtimeMs, sha256: hash.digest('hex') };
+    return cachedApk;
   }
   function windows() {
     const update = newestFile(exeDirectory, /^ZiAr(?:-Windows-Setup-| Setup )(\d+\.\d+\.\d+)\.exe$/i);
