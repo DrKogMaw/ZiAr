@@ -47,12 +47,17 @@ internal class PhonePeerService(
     @Volatile private var running = false
     private var listener: ServerSocket? = null
     private var discovery: DatagramSocket? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     fun start(): Boolean {
         if (running) return true
         return try {
             listener = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(PeerProtocol.TCP_PORT)); soTimeout = 1000 }
             discovery = DatagramSocket(null).apply { reuseAddress = true; bind(InetSocketAddress(PeerProtocol.UDP_PORT)); soTimeout = 1000; broadcast = true }
+            try {
+                val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                multicastLock = wifi.createMulticastLock("ziar-peer-discovery").apply { setReferenceCounted(false); acquire() }
+            } catch (_: Exception) { /* Gateway discovery and manual address still work. */ }
             running = true
             Thread({ acceptLoop() }, "ziar-peer-receive").apply { isDaemon = true; start() }
             Thread({ discoveryLoop() }, "ziar-peer-discovery").apply { isDaemon = true; start() }
@@ -69,6 +74,7 @@ internal class PhonePeerService(
         running = false
         listener?.close(); listener = null
         discovery?.close(); discovery = null
+        multicastLock?.let { if (it.isHeld) it.release() }; multicastLock = null
         synchronized(peers) { peers.clear() }
         onPeers(emptyList())
     }
