@@ -18,7 +18,10 @@ test('PC shows connected devices and enforces one-device or multiple-device pair
   const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory: path.join(root, 'received'), port: 0, code: '123456',
     isDesktopRequest: (_peer, request) => request.headers['x-test-desktop'] === 'yes' });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
   const base = `http://127.0.0.1:${server.address().port}`;
   const pcHeaders = { 'X-Test-Desktop': 'yes' };
   const pair = id => fetch(base + '/api/pair', { method: 'POST', body: JSON.stringify({ code: '123456', deviceId: id, deviceName: id }) });
@@ -78,7 +81,10 @@ test('paired phones can fetch only the Android update hosted on the PC', async t
   const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory: path.join(root, 'received'), port: 0, code: '123456', updates,
     isDesktopRequest: (_peer, request) => request.headers['x-test-desktop'] === 'yes' });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  });
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.equal((await fetch(base + '/api/update/android')).status, 401);
   const pair = await fetch(base + '/api/pair', { method: 'POST', body: '123456' });
