@@ -110,6 +110,10 @@ class MainActivity : Activity() {
                     }
                     return request.url.host != currentHost()
                 }
+                override fun onPageFinished(view: WebView, url: String) {
+                    if (url.startsWith("http://${currentHost()}:47831/"))
+                        view.evaluateJavascript("(function(){var h=document.querySelector('main > .row');if(h)h.style.display='none'})()", null)
+                }
                 override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
                     if (request.isForMainFrame) {
                         showSetup(false)
@@ -236,7 +240,7 @@ class MainActivity : Activity() {
             indeterminateTintList = ColorStateList.valueOf(accent)
         }
         statusRow.addView(discoveryProgress, LinearLayout.LayoutParams(dp(22), dp(22)))
-        discoveryStatus = label("Searching on Wi-Fi…", 15f)
+        discoveryStatus = label("Scanning Wi-Fi…", 15f)
         statusRow.addView(discoveryStatus, LinearLayout.LayoutParams(-1, -2).apply { marginStart = dp(14) })
         content.addView(statusRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(30) })
 
@@ -256,7 +260,7 @@ class MainActivity : Activity() {
         content.addView(manualConnection, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
 
         val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        links.addView(label("Enter PC address", 14f, accent, true).apply {
+        links.addView(label("Enter address", 14f, accent, true).apply {
             gravity = Gravity.CENTER_VERTICAL
             setOnClickListener { manualConnection.visibility = View.VISIBLE; address.requestFocus() }
         }, LinearLayout.LayoutParams(0, dp(52), 1f))
@@ -296,7 +300,8 @@ class MainActivity : Activity() {
             background = shape(surface, 15)
         }
         pcTab = modeTab("Computer") { showPcMode() }
-        phoneTab = modeTab("Nearby phones") { showPhoneMode() }
+        phoneTab = modeTab("Nearby") { showPhoneMode() }
+        phoneTab.contentDescription = "Nearby phones"
         tabs.addView(pcTab, LinearLayout.LayoutParams(0, dp(48), 1f))
         tabs.addView(phoneTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(4) })
         header.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
@@ -327,15 +332,21 @@ class MainActivity : Activity() {
     private fun buildPhonePanel(): ScrollView {
         val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(24), dp(24), dp(32)) }
         val heading = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        heading.addView(label("Share nearby", 27f, ink, true), LinearLayout.LayoutParams(0, -2, 1f))
-        heading.addView(label("How it works", 13f, accent, true).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+        heading.addView(label("Phone sharing", 25f, ink, true), LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ziar_ic_help)
+            setColorFilter(accent)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            backgroundTintList = null
+            background = touchSurface(surface, 14)
+            contentDescription = "How phone sharing works"
             setOnClickListener {
                 AlertDialog.Builder(this@MainActivity).setTitle("Share nearby")
                     .setMessage("Keep ZiAr open on both phones. Use the same Wi-Fi, or connect one phone to the other's hotspot. Tap a phone below and enter its receive code.\n\nThis phone's address: ${peerAddresses.text}")
                     .setPositiveButton("Got it", null).show()
             }
-        }, LinearLayout.LayoutParams(-2, dp(48)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         content.addView(heading)
         content.addView(label("Send and receive on the same Wi-Fi.", 15f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
 
@@ -613,7 +624,7 @@ class MainActivity : Activity() {
     }
     private fun startDiscovery() {
         stopDiscovery()
-        discoveryStatus.text = "Searching on Wi-Fi…"
+        discoveryStatus.text = "Scanning Wi-Fi…"
         discoveryProgress.visibility = View.VISIBLE
         discovering = true
         val generation = discoveryGeneration

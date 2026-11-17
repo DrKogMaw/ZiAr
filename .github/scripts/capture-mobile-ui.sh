@@ -13,7 +13,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 
 for node in ET.parse('ui-preview/window.xml').iter('node'):
-    if node.attrib.get('text') == 'Nearby phones':
+    if node.attrib.get('text') == 'Nearby':
         left, top, right, bottom = map(int, re.findall(r'\d+', node.attrib['bounds']))
         subprocess.run(['adb', 'shell', 'input', 'tap', str((left + right) // 2), str((top + bottom) // 2)], check=True)
         break
@@ -33,4 +33,19 @@ for attempt in 1 2 3 4 5 6 7 8; do
 done
 grep -q 'Find your PC' ui-preview/large-window.xml
 adb exec-out screencap -p > ui-preview/find-pc-large-text.png
+python3 - <<'PY'
+import re
+import subprocess
+import xml.etree.ElementTree as ET
+
+for node in ET.parse('ui-preview/large-window.xml').iter('node'):
+    if node.attrib.get('text') == 'Nearby':
+        left, top, right, bottom = map(int, re.findall(r'\d+', node.attrib['bounds']))
+        subprocess.run(['adb', 'shell', 'input', 'tap', str((left + right) // 2), str((top + bottom) // 2)], check=True)
+        break
+else:
+    raise SystemExit('Nearby tab not found at large text size')
+PY
+sleep 3
+adb exec-out screencap -p > ui-preview/nearby-large-text.png
 adb shell settings put system font_scale 1.0
