@@ -159,7 +159,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT < 29) content.addView(Button(this).apply { text = "Allow saving received files"; setOnClickListener { requestOldStoragePermission() } })
         peerStatus = TextView(this).apply { textSize = 16f; setPadding(0, 20, 0, 0) }
         content.addView(peerStatus)
-        return ScrollView(this).apply { addView(content) }
+        return ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(content) }
     }
 
     private fun showPhoneMode() {
