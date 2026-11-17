@@ -31,7 +31,10 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -51,15 +54,16 @@ class MainActivity : Activity() {
     private var chooser: ValueCallback<Array<Uri>>? = null
     private lateinit var web: WebView
     private lateinit var address: EditText
-    private lateinit var setup: LinearLayout
+    private lateinit var setup: ScrollView
     private lateinit var discoveryStatus: TextView
+    private lateinit var discoveryProgress: ProgressBar
+    private lateinit var manualConnection: LinearLayout
     private lateinit var pcPanel: LinearLayout
     private lateinit var phonePanel: ScrollView
     private lateinit var peerStatus: TextView
     private lateinit var peerCode: TextView
     private lateinit var peerAddresses: TextView
     private lateinit var peerList: LinearLayout
-    private lateinit var manualPeerAddress: EditText
     private lateinit var pcTab: Button
     private lateinit var phoneTab: Button
     private var peerService: PhonePeerService? = null
@@ -89,23 +93,30 @@ class MainActivity : Activity() {
         window.statusBarColor = Color.rgb(11, 16, 32)
         window.navigationBarColor = Color.rgb(11, 16, 32)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        setup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(32), dp(24), dp(24)) }
-        discoveryStatus = TextView(this).apply { text = "Searching for your Windows PC on Wi-Fi…"; textSize = 18f }
-        address = EditText(this).apply { hint = "PC address, e.g. 192.168.1.5"; inputType = android.text.InputType.TYPE_CLASS_TEXT }
-        val connect = Button(this).apply { text = "Connect to PC"; setOnClickListener { connect() } }
-        val search = Button(this).apply { text = "Search again"; setOnClickListener { startDiscovery() } }
-        setup.addView(discoveryStatus); setup.addView(address); setup.addView(connect); setup.addView(search)
+        setup = buildSetup()
         web = WebView(this).apply {
+            setBackgroundColor(Color.rgb(11, 16, 32))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = true
+            settings.userAgentString = "${settings.userAgentString} ZiArAndroid"
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                    if (request.url.scheme == "ziar" && request.url.host == "change-pc") {
+                        showSetup(false)
+                        manualConnection.visibility = View.VISIBLE
+                        return true
+                    }
                     return request.url.host != currentHost()
                 }
                 override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
-                    if (request.isForMainFrame) { showSetup(false); discoveryStatus.text = "Cannot reach PC. Check Wi-Fi or enter its address below." }
+                    if (request.isForMainFrame) {
+                        showSetup(false)
+                        discoveryProgress.visibility = View.GONE
+                        discoveryStatus.text = "PC unavailable. Check Wi-Fi or enter its address."
+                        manualConnection.visibility = View.VISIBLE
+                    }
                 }
             }
             webChromeClient = object : WebChromeClient() {
@@ -136,7 +147,11 @@ class MainActivity : Activity() {
                 }
             })
         }
-        pcPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(setup); addView(web, LinearLayout.LayoutParams(-1, 0, 1f)) }
+        pcPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(setup, LinearLayout.LayoutParams(-1, 0, 1f))
+            addView(web, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
         phonePanel = buildPhonePanel().apply { visibility = View.GONE }
         val header = buildHeader()
         val root = LinearLayout(this).apply {
@@ -161,55 +176,130 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
 
-    private fun shape(color: Int, radius: Int) = GradientDrawable().apply {
+    private val ink get() = Color.rgb(240, 246, 255)
+    private val muted get() = Color.rgb(166, 180, 207)
+    private val accent get() = Color.rgb(141, 213, 255)
+    private val surface get() = Color.rgb(21, 30, 52)
+    private val outline get() = Color.rgb(43, 58, 88)
+
+    private fun shape(color: Int, radius: Int, border: Int? = null) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(radius).toFloat()
+        if (border != null) setStroke(dp(1), border)
     }
 
     private fun touchSurface(color: Int, radius: Int) = RippleDrawable(
         ColorStateList.valueOf(Color.argb(50, 255, 255, 255)), shape(color, radius), shape(Color.WHITE, radius)
     )
 
+    private fun label(value: String, size: Float, color: Int = ink, bold: Boolean = false) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(color)
+        if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    }
+
+    private fun action(value: String, primary: Boolean = true, click: () -> Unit) = Button(this).apply {
+        text = value
+        isAllCaps = false
+        textSize = 16f
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        setTextColor(if (primary) Color.rgb(6, 20, 38) else ink)
+        backgroundTintList = null
+        background = touchSurface(if (primary) accent else Color.rgb(34, 52, 87), 14)
+        stateListAnimator = null
+        minHeight = dp(56)
+        setOnClickListener { click() }
+    }
+
+    private fun buildSetup(): ScrollView {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(36), dp(24), dp(32))
+        }
+        content.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ziar_ic_computer)
+            setColorFilter(accent)
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = shape(surface, 16)
+        }, LinearLayout.LayoutParams(dp(64), dp(64)))
+        content.addView(label("Find your PC", 28f, ink, true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(28) })
+        content.addView(label("Open ZiAr on your computer.", 15f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+
+        val statusRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(15), dp(16), dp(15))
+            background = shape(surface, 14, outline)
+        }
+        discoveryProgress = ProgressBar(this, null, android.R.attr.progressBarStyleSmall).apply {
+            indeterminateTintList = ColorStateList.valueOf(accent)
+        }
+        statusRow.addView(discoveryProgress, LinearLayout.LayoutParams(dp(22), dp(22)))
+        discoveryStatus = label("Searching on Wi-Fi…", 15f)
+        statusRow.addView(discoveryStatus, LinearLayout.LayoutParams(-1, -2).apply { marginStart = dp(14) })
+        content.addView(statusRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(30) })
+
+        manualConnection = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        address = EditText(this).apply {
+            hint = "PC address · 192.168.1.5"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+            textSize = 16f
+            setTextColor(ink)
+            setHintTextColor(muted)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = shape(surface, 13, outline)
+        }
+        manualConnection.addView(address, LinearLayout.LayoutParams(-1, dp(56)))
+        manualConnection.addView(action("Connect to PC") { connect() }, LinearLayout.LayoutParams(-1, dp(56)).apply { topMargin = dp(12) })
+        content.addView(manualConnection, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+
+        val links = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        links.addView(label("Enter PC address", 14f, accent, true).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { manualConnection.visibility = View.VISIBLE; address.requestFocus() }
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        links.addView(label("Search again", 14f, muted, true).apply {
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            setOnClickListener { startDiscovery() }
+        }, LinearLayout.LayoutParams(0, dp(52), 1f))
+        content.addView(links, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        return ScrollView(this).apply { isVerticalScrollBarEnabled = false; fillViewport = true; addView(content) }
+    }
+
     private fun buildHeader(): LinearLayout {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(10), dp(20), dp(14))
-            setBackgroundColor(Color.rgb(21, 30, 52))
+            setPadding(dp(20), dp(8), dp(20), dp(12))
+            setBackgroundColor(Color.rgb(11, 16, 32))
         }
         val titleRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        titleRow.addView(TextView(this).apply {
-            text = "ZiAr"
-            textSize = 24f
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
+        titleRow.addView(label("ZiAr", 24f, ink, true).apply {
             gravity = Gravity.CENTER_VERTICAL
         }, LinearLayout.LayoutParams(0, dp(52), 1f).apply { gravity = Gravity.CENTER_VERTICAL })
-        titleRow.addView(Button(this).apply {
-            text = "Update"
-            isAllCaps = false
-            textSize = 14f
-            setTextColor(Color.rgb(6, 20, 38))
-            typeface = Typeface.DEFAULT_BOLD
+        titleRow.addView(ImageButton(this).apply {
+            setImageResource(R.drawable.ziar_ic_update)
+            setColorFilter(accent)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(12), dp(12), dp(12), dp(12))
             backgroundTintList = null
-            background = touchSurface(Color.rgb(141, 213, 255), 12)
-            minHeight = dp(48)
-            minWidth = dp(92)
-            setPadding(dp(16), 0, dp(16), 0)
+            background = touchSurface(surface, 14)
             contentDescription = "Check for Android updates"
             setOnClickListener { updater.check(currentHost()) }
-        }, LinearLayout.LayoutParams(-2, dp(48)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(titleRow)
 
         val tabs = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
-            background = shape(Color.rgb(11, 16, 32), 15)
+            background = shape(surface, 15)
         }
-        pcTab = modeTab("Windows PC") { showPcMode() }
-        phoneTab = modeTab("Phone to phone") { showPhoneMode() }
+        pcTab = modeTab("Computer") { showPcMode() }
+        phoneTab = modeTab("Nearby phones") { showPhoneMode() }
         tabs.addView(pcTab, LinearLayout.LayoutParams(0, dp(48), 1f))
-        tabs.addView(phoneTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(8) })
-        header.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        tabs.addView(phoneTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(4) })
+        header.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         return header
     }
 
@@ -228,37 +318,50 @@ class MainActivity : Activity() {
     private fun updateModeTabs() {
         for ((button, active) in listOf(pcTab to !phoneMode, phoneTab to phoneMode)) {
             button.isSelected = active
-            button.setTextColor(if (active) Color.rgb(6, 20, 38) else Color.rgb(185, 214, 255))
-            button.background = touchSurface(if (active) Color.rgb(141, 213, 255) else Color.rgb(11, 16, 32), 11)
+            button.setTextColor(if (active) ink else muted)
+            button.background = touchSurface(if (active) Color.rgb(39, 62, 99) else surface, 11)
         }
     }
 
     private fun currentHost() = getPreferences(0).getString("host", "") ?: ""
     private fun buildPhonePanel(): ScrollView {
-        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 24, 32, 32) }
-        content.addView(TextView(this).apply { text = "Share with another phone"; textSize = 23f })
-        content.addView(TextView(this).apply {
-            text = "Put both phones on the same Wi-Fi. One phone can turn on its hotspot and the other can join it. Keep ZiAr open on both phones."
-            textSize = 16f
-        })
-        peerCode = TextView(this).apply { textSize = 26f; setPadding(0, 24, 0, 8) }
-        content.addView(peerCode)
-        peerAddresses = TextView(this).apply { textSize = 14f; setTextIsSelectable(true) }
-        content.addView(peerAddresses)
-        content.addView(TextView(this).apply { text = "Received files go to Downloads / ZiAr Received"; setPadding(0, 16, 0, 16) })
-        content.addView(TextView(this).apply { text = "Nearby phones"; textSize = 20f })
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(24), dp(24), dp(32)) }
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        heading.addView(label("Share nearby", 27f, ink, true), LinearLayout.LayoutParams(0, -2, 1f))
+        heading.addView(label("How it works", 13f, accent, true).apply {
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            setOnClickListener {
+                AlertDialog.Builder(this@MainActivity).setTitle("Share nearby")
+                    .setMessage("Keep ZiAr open on both phones. Use the same Wi-Fi, or connect one phone to the other's hotspot. Tap a phone below and enter its receive code.\n\nThis phone's address: ${peerAddresses.text}")
+                    .setPositiveButton("Got it", null).show()
+            }
+        }, LinearLayout.LayoutParams(-2, dp(48)))
+        content.addView(heading)
+        content.addView(label("Send and receive on the same Wi-Fi.", 15f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+
+        val receiveCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(18))
+            background = shape(surface, 16, outline)
+        }
+        receiveCard.addView(label("Your receive code", 14f, muted, true))
+        peerCode = label("······", 34f, accent, true).apply { letterSpacing = 0.12f; setTextIsSelectable(true) }
+        receiveCard.addView(peerCode, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        receiveCard.addView(label("Share this code with the sender", 14f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+        content.addView(receiveCard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(26) })
+
+        content.addView(label("Available phones", 19f, ink, true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(30) })
+        peerStatus = label("Looking for phones…", 14f, muted)
+        content.addView(peerStatus, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         peerList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        content.addView(peerList)
-        content.addView(TextView(this).apply { text = "If a phone does not appear, enter its address shown above:"; setPadding(0, 24, 0, 4) })
-        manualPeerAddress = EditText(this).apply { hint = "Other phone's IP address"; inputType = InputType.TYPE_CLASS_TEXT }
-        content.addView(manualPeerAddress)
-        content.addView(Button(this).apply { text = "Send by address"; setOnClickListener {
-            val address = manualPeerAddress.text.toString().trim()
-            if (validIpv4(address)) choosePeer(address, address) else peerStatus.text = "Enter the other phone's IPv4 address."
-        } })
-        if (Build.VERSION.SDK_INT < 29) content.addView(Button(this).apply { text = "Allow saving received files"; setOnClickListener { requestOldStoragePermission() } })
-        peerStatus = TextView(this).apply { textSize = 16f; setPadding(0, 20, 0, 0) }
-        content.addView(peerStatus)
+        content.addView(peerList, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        content.addView(label("Connect by address", 15f, accent, true).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setOnClickListener { openPeerAddressDialog() }
+        }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(10) })
+        content.addView(label("Received files save to Downloads / ZiAr Received", 13f, muted), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+        if (Build.VERSION.SDK_INT < 29) content.addView(action("Allow file storage", false) { requestOldStoragePermission() }, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(16) })
+        peerAddresses = TextView(this)
         return ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(content) }
     }
 
@@ -270,14 +373,14 @@ class MainActivity : Activity() {
         pcPanel.visibility = View.GONE
         phonePanel.visibility = View.VISIBLE
         val sharing = PhonePeerService(this,
-            { phones -> runOnUiThread { if (phoneMode) { renderPeers(phones); peerAddresses.text = "This phone's addresses: ${peerService?.addresses()?.joinToString()?.ifBlank { "Turn on Wi-Fi or hotspot" } ?: "Unavailable"}" } } },
+            { phones -> runOnUiThread { if (phoneMode) { renderPeers(phones); peerAddresses.text = peerService?.addresses()?.joinToString()?.ifBlank { "Turn on Wi-Fi or hotspot" } ?: "Unavailable" } } },
             { name -> runOnUiThread { if (phoneMode) { peerStatus.text = "Received $name in Downloads / ZiAr Received"; Toast.makeText(this, "Received $name", Toast.LENGTH_LONG).show() } } },
             { error -> runOnUiThread { if (phoneMode) peerStatus.text = error } })
         peerService = sharing
-        peerCode.text = "Your receive code: ${sharing.code}"
-        peerAddresses.text = "This phone's addresses: ${sharing.addresses().joinToString().ifBlank { "Turn on Wi-Fi or hotspot" }}"
+        peerCode.text = sharing.code
+        peerAddresses.text = sharing.addresses().joinToString().ifBlank { "Turn on Wi-Fi or hotspot" }
         renderPeers(emptyList())
-        peerStatus.text = if (sharing.start()) "Searching for nearby phones…" else "Phone sharing could not start."
+        peerStatus.text = if (sharing.start()) "Looking for phones…" else "Phone sharing could not start."
         requestOldStoragePermission()
     }
 
@@ -294,22 +397,89 @@ class MainActivity : Activity() {
 
     private fun renderPeers(phones: List<NearbyPhone>) {
         peerList.removeAllViews()
-        if (phones.isEmpty()) peerList.addView(TextView(this).apply { text = "Looking for another phone…" })
-        else for (phone in phones) peerList.addView(Button(this).apply {
-            text = "Send to ${phone.name} (${phone.address})"
-            setOnClickListener { choosePeer(phone.address, phone.name) }
-        })
+        if (phones.isEmpty()) {
+            val empty = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(18), dp(18), dp(18), dp(18))
+                background = shape(surface, 15)
+            }
+            empty.addView(ImageView(this).apply {
+                setImageResource(R.drawable.ziar_ic_phone)
+                setColorFilter(muted)
+            }, LinearLayout.LayoutParams(dp(28), dp(28)))
+            empty.addView(label("No phones found yet", 15f, muted), LinearLayout.LayoutParams(-1, -2).apply { marginStart = dp(14) })
+            peerList.addView(empty)
+        } else for (phone in phones) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), dp(14), dp(16), dp(14))
+                background = touchSurface(surface, 15)
+                isClickable = true
+                isFocusable = true
+                contentDescription = "Send files to ${phone.name}"
+                setOnClickListener { choosePeer(phone.address, phone.name) }
+            }
+            row.addView(ImageView(this).apply {
+                setImageResource(R.drawable.ziar_ic_phone)
+                setColorFilter(accent)
+            }, LinearLayout.LayoutParams(dp(26), dp(26)))
+            val details = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            details.addView(label(phone.name, 16f, ink, true))
+            details.addView(label(phone.address, 13f, muted))
+            row.addView(details, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+            row.addView(label("Send", 14f, accent, true))
+            peerList.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        }
+    }
+
+    private fun openPeerAddressDialog() {
+        val entry = EditText(this).apply {
+            hint = "Other phone's IP address"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+            setTextColor(ink)
+            setHintTextColor(muted)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = shape(surface, 12, outline)
+        }
+        val container = LinearLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(entry, LinearLayout.LayoutParams(-1, dp(56))) }
+        val dialog = AlertDialog.Builder(this).setTitle("Connect by address")
+            .setMessage("Enter the address shown on the other phone.")
+            .setView(container).setNegativeButton("Cancel", null).setPositiveButton("Continue", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val address = entry.text.toString().trim()
+                if (validIpv4(address)) { dialog.dismiss(); choosePeer(address, address) }
+                else entry.error = "Enter a valid IPv4 address"
+            }
+        }
+        dialog.show()
     }
 
     private fun validIpv4(address: String): Boolean = Regex("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$").matches(address) && address.split('.').all { it.toInt() <= 255 }
 
     private fun choosePeer(address: String, name: String) {
-        val entry = EditText(this).apply { hint = "Six-digit receive code"; inputType = InputType.TYPE_CLASS_NUMBER; filters = arrayOf(InputFilter.LengthFilter(6)) }
-        AlertDialog.Builder(this).setTitle("Send to $name").setMessage("Enter the code shown on the other phone.").setView(entry)
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Choose files") { _, _ ->
+        val entry = EditText(this).apply {
+            hint = "Six-digit receive code"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(6))
+            setSingleLine(true)
+            setTextColor(ink)
+            setHintTextColor(muted)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = shape(surface, 12, outline)
+        }
+        val container = LinearLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(entry, LinearLayout.LayoutParams(-1, dp(56))) }
+        val dialog = AlertDialog.Builder(this).setTitle("Send to $name")
+            .setMessage("Enter the code on the other phone.").setView(container)
+            .setNegativeButton("Cancel", null).setPositiveButton("Choose files", null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val code = entry.text.toString()
-                if (!Regex("[0-9]{6}").matches(code)) { peerStatus.text = "Enter the six-digit code from the other phone."; return@setPositiveButton }
+                if (!Regex("[0-9]{6}").matches(code)) { entry.error = "Enter six digits"; return@setOnClickListener }
+                dialog.dismiss()
                 chosenPeerAddress = address; chosenPeerCode = code
                 val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
@@ -319,7 +489,9 @@ class MainActivity : Activity() {
                 }
                 try { startActivityForResult(Intent.createChooser(intent, "Choose files to send"), peerChooserRequest) }
                 catch (error: Exception) { peerStatus.text = "Could not open the file picker: ${error.message}" }
-            }.show()
+            }
+        }
+        dialog.show()
     }
 
     private fun requestOldStoragePermission() {
@@ -441,7 +613,8 @@ class MainActivity : Activity() {
     }
     private fun startDiscovery() {
         stopDiscovery()
-        discoveryStatus.text = "Searching for your Windows PC on Wi-Fi…"
+        discoveryStatus.text = "Searching on Wi-Fi…"
+        discoveryProgress.visibility = View.VISIBLE
         discovering = true
         val generation = discoveryGeneration
         Thread {
@@ -464,7 +637,11 @@ class MainActivity : Activity() {
                     } catch (_: SocketTimeoutException) { /* Check again while the app is open. */ }
                 }
             } catch (_: Exception) {
-                runOnUiThread { if (discovering && generation == discoveryGeneration) discoveryStatus.text = "Automatic discovery is unavailable. Enter the PC address below." }
+                runOnUiThread { if (discovering && generation == discoveryGeneration) {
+                    discoveryStatus.text = "Search unavailable. Enter the PC address."
+                    discoveryProgress.visibility = View.GONE
+                    manualConnection.visibility = View.VISIBLE
+                } }
             } finally { socket?.close(); if (discoverySocket === socket) discoverySocket = null }
         }.start()
     }
@@ -472,7 +649,7 @@ class MainActivity : Activity() {
     private fun connect() {
         val host = address.text.toString().trim()
         if (!Regex("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$").matches(host) || host.split('.').any { it.toInt() > 255 }) {
-            Toast.makeText(this, "Enter the PC's IPv4 address shown in ZiAr.", Toast.LENGTH_LONG).show(); return
+            address.error = "Enter a valid PC address"; return
         }
         getPreferences(0).edit().putString("host", host).apply()
         stopDiscovery()
