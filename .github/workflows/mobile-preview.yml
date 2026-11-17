@@ -1,0 +1,59 @@
+name: Preview Android UI
+on:
+  workflow_dispatch:
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: gradle assembleDebug
+        working-directory: android
+      - name: Enable Android emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Capture phone screens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            mkdir -p ui-preview
+            adb install android/app/build/outputs/apk/debug/app-debug.apk
+            adb shell am start -n com.ziar.transfer/.MainActivity
+            sleep 5
+            adb exec-out screencap -p > ui-preview/find-pc.png
+            adb shell uiautomator dump /sdcard/window.xml
+            adb pull /sdcard/window.xml ui-preview/window.xml
+            python3 - <<'PY'
+            import re, subprocess, xml.etree.ElementTree as ET
+            for node in ET.parse('ui-preview/window.xml').iter('node'):
+                if node.attrib.get('text') == 'Nearby phones':
+                    left, top, right, bottom = map(int, re.findall(r'\d+', node.attrib['bounds']))
+                    subprocess.run(['adb', 'shell', 'input', 'tap', str((left + right) // 2), str((top + bottom) // 2)], check=True)
+                    break
+            else:
+                raise SystemExit('Nearby tab not found in the UI')
+            PY
+            sleep 4
+            adb exec-out screencap -p > ui-preview/nearby.png
+            adb shell settings put system font_scale 1.3
+            adb shell am force-stop com.ziar.transfer
+            adb shell am start -n com.ziar.transfer/.MainActivity
+            sleep 3
+            adb exec-out screencap -p > ui-preview/find-pc-large-text.png
+            adb shell settings put system font_scale 1.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZiAr-Android-UI
+          path: ui-preview/*.png

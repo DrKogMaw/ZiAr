@@ -265,7 +265,7 @@ class MainActivity : Activity() {
             setOnClickListener { startDiscovery() }
         }, LinearLayout.LayoutParams(0, dp(52), 1f))
         content.addView(links, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        return ScrollView(this).apply { isVerticalScrollBarEnabled = false; fillViewport = true; addView(content) }
+        return ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFillViewport = true; addView(content) }
     }
 
     private fun buildHeader(): LinearLayout {
