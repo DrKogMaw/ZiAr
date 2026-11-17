@@ -1,15 +1,21 @@
 package com.ziar.transfer
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.DownloadManager
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.text.InputType
+import android.text.InputFilter
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.DownloadListener
@@ -20,6 +26,7 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import java.net.DatagramPacket
@@ -37,17 +44,30 @@ class MainActivity : Activity() {
     private lateinit var address: EditText
     private lateinit var setup: LinearLayout
     private lateinit var discoveryStatus: TextView
+    private lateinit var pcPanel: LinearLayout
+    private lateinit var phonePanel: ScrollView
+    private lateinit var peerStatus: TextView
+    private lateinit var peerCode: TextView
+    private lateinit var peerAddresses: TextView
+    private lateinit var peerList: LinearLayout
+    private lateinit var manualPeerAddress: EditText
+    private var peerService: PhonePeerService? = null
+    private var phoneMode = false
+    private var chosenPeerAddress: String? = null
+    private var chosenPeerCode: String? = null
     private var discoverySocket: DatagramSocket? = null
     @Volatile private var discovering = false
     @Volatile private var discoveryGeneration = 0
     private val chooserRequest = 42
+    private val peerChooserRequest = 43
+    private val storageRequest = 44
     private val pollHandler = Handler(Looper.getMainLooper())
     private val queuedDownloads = mutableSetOf<String>()
     private var pollInFlight = false
     private var isActive = false
     private val pollTask = object : Runnable {
         override fun run() {
-            if (isActive && ::web.isInitialized && web.visibility == View.VISIBLE && !pollInFlight) pollForPcFiles()
+            if (isActive && !phoneMode && ::web.isInitialized && web.visibility == View.VISIBLE && !pollInFlight) pollForPcFiles()
             pollHandler.postDelayed(this, 3000)
         }
     }
@@ -101,7 +121,12 @@ class MainActivity : Activity() {
                 }
             })
         }
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(setup); addView(web, LinearLayout.LayoutParams(-1, 0, 1f)) }
+        pcPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(setup); addView(web, LinearLayout.LayoutParams(-1, 0, 1f)) }
+        phonePanel = buildPhonePanel().apply { visibility = View.GONE }
+        val modes = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        modes.addView(Button(this).apply { text = "Windows PC"; setOnClickListener { showPcMode() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        modes.addView(Button(this).apply { text = "Phone to phone"; setOnClickListener { showPhoneMode() } }, LinearLayout.LayoutParams(0, -2, 1f))
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(modes); addView(pcPanel, LinearLayout.LayoutParams(-1, 0, 1f)); addView(phonePanel, LinearLayout.LayoutParams(-1, 0, 1f)) }
         setContentView(root)
         address.setText(getPreferences(0).getString("host", ""))
         showSetup(true)
@@ -109,6 +134,102 @@ class MainActivity : Activity() {
     }
 
     private fun currentHost() = getPreferences(0).getString("host", "") ?: ""
+    private fun buildPhonePanel(): ScrollView {
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(32, 24, 32, 32) }
+        content.addView(TextView(this).apply { text = "Share with another phone"; textSize = 23f })
+        content.addView(TextView(this).apply {
+            text = "Put both phones on the same Wi-Fi. One phone can turn on its hotspot and the other can join it. Keep ZiAr open on both phones."
+            textSize = 16f
+        })
+        peerCode = TextView(this).apply { textSize = 26f; setPadding(0, 24, 0, 8) }
+        content.addView(peerCode)
+        peerAddresses = TextView(this).apply { textSize = 14f; setTextIsSelectable(true) }
+        content.addView(peerAddresses)
+        content.addView(TextView(this).apply { text = "Received files go to Downloads / ZiAr Received"; setPadding(0, 16, 0, 16) })
+        content.addView(TextView(this).apply { text = "Nearby phones"; textSize = 20f })
+        peerList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(peerList)
+        content.addView(TextView(this).apply { text = "If a phone does not appear, enter its address shown above:"; setPadding(0, 24, 0, 4) })
+        manualPeerAddress = EditText(this).apply { hint = "Other phone's IP address"; inputType = InputType.TYPE_CLASS_TEXT }
+        content.addView(manualPeerAddress)
+        content.addView(Button(this).apply { text = "Send by address"; setOnClickListener {
+            val address = manualPeerAddress.text.toString().trim()
+            if (validIpv4(address)) choosePeer(address, address) else peerStatus.text = "Enter the other phone's IPv4 address."
+        } })
+        if (Build.VERSION.SDK_INT < 29) content.addView(Button(this).apply { text = "Allow saving received files"; setOnClickListener { requestOldStoragePermission() } })
+        peerStatus = TextView(this).apply { textSize = 16f; setPadding(0, 20, 0, 0) }
+        content.addView(peerStatus)
+        return ScrollView(this).apply { addView(content) }
+    }
+
+    private fun showPhoneMode() {
+        if (phoneMode) return
+        phoneMode = true
+        stopDiscovery()
+        pcPanel.visibility = View.GONE
+        phonePanel.visibility = View.VISIBLE
+        val sharing = PhonePeerService(this,
+            { phones -> runOnUiThread { if (phoneMode) { renderPeers(phones); peerAddresses.text = "This phone's addresses: ${peerService?.addresses()?.joinToString()?.ifBlank { "Turn on Wi-Fi or hotspot" } ?: "Unavailable"}" } } },
+            { name -> runOnUiThread { if (phoneMode) { peerStatus.text = "Received $name in Downloads / ZiAr Received"; Toast.makeText(this, "Received $name", Toast.LENGTH_LONG).show() } } },
+            { error -> runOnUiThread { if (phoneMode) peerStatus.text = error } })
+        peerService = sharing
+        peerCode.text = "Your receive code: ${sharing.code}"
+        peerAddresses.text = "This phone's addresses: ${sharing.addresses().joinToString().ifBlank { "Turn on Wi-Fi or hotspot" }}"
+        renderPeers(emptyList())
+        peerStatus.text = if (sharing.start()) "Searching for nearby phones…" else "Phone sharing could not start."
+        requestOldStoragePermission()
+    }
+
+    private fun showPcMode() {
+        if (!phoneMode) return
+        phoneMode = false
+        peerService?.stop(); peerService = null
+        chosenPeerAddress = null; chosenPeerCode = null
+        phonePanel.visibility = View.GONE
+        pcPanel.visibility = View.VISIBLE
+        if (setup.visibility == View.VISIBLE) startDiscovery()
+    }
+
+    private fun renderPeers(phones: List<NearbyPhone>) {
+        peerList.removeAllViews()
+        if (phones.isEmpty()) peerList.addView(TextView(this).apply { text = "Looking for another phone…" })
+        else for (phone in phones) peerList.addView(Button(this).apply {
+            text = "Send to ${phone.name} (${phone.address})"
+            setOnClickListener { choosePeer(phone.address, phone.name) }
+        })
+    }
+
+    private fun validIpv4(address: String): Boolean = Regex("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$").matches(address) && address.split('.').all { it.toInt() <= 255 }
+
+    private fun choosePeer(address: String, name: String) {
+        val entry = EditText(this).apply { hint = "Six-digit receive code"; inputType = InputType.TYPE_CLASS_NUMBER; filters = arrayOf(InputFilter.LengthFilter(6)) }
+        AlertDialog.Builder(this).setTitle("Send to $name").setMessage("Enter the code shown on the other phone.").setView(entry)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Choose files") { _, _ ->
+                val code = entry.text.toString()
+                if (!Regex("[0-9]{6}").matches(code)) { peerStatus.text = "Enter the six-digit code from the other phone."; return@setPositiveButton }
+                chosenPeerAddress = address; chosenPeerCode = code
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try { startActivityForResult(Intent.createChooser(intent, "Choose files to send"), peerChooserRequest) }
+                catch (error: Exception) { peerStatus.text = "Could not open the file picker: ${error.message}" }
+            }.show()
+    }
+
+    private fun requestOldStoragePermission() {
+        if (Build.VERSION.SDK_INT < 29 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), storageRequest)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == storageRequest && grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED)
+            peerStatus.text = "Allow file storage to receive files on this phone."
+    }
     private fun selectedName(uri: Uri): String {
         val name = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) cursor.getString(0) else null
@@ -257,25 +378,38 @@ class MainActivity : Activity() {
         web.loadUrl("http://$host:47831/")
     }
     private fun showSetup(search: Boolean) { setup.visibility = View.VISIBLE; web.visibility = View.GONE; if (search) startDiscovery() }
+    private fun selectedFiles(resultCode: Int, data: Intent?): List<Uri> {
+        if (resultCode != RESULT_OK) return emptyList()
+        val files = mutableListOf<Uri>()
+        data?.clipData?.let { selected -> for (i in 0 until selected.itemCount) files.add(selected.getItemAt(i).uri) }
+        data?.data?.let { files.add(it) }
+        return files.distinct()
+    }
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == chooserRequest) {
-            val files = mutableListOf<Uri>()
-            if (resultCode == RESULT_OK) {
-                data?.clipData?.let { selected ->
-                    for (i in 0 until selected.itemCount) files.add(selected.getItemAt(i).uri)
-                }
-                data?.data?.let { files.add(it) }
-            }
+            val files = selectedFiles(resultCode, data)
             chooser?.onReceiveValue(null)
             chooser = null
             if (files.isEmpty()) Toast.makeText(this, "No files were selected.", Toast.LENGTH_SHORT).show()
-            else uploadSelectedFiles(files.distinct())
+            else uploadSelectedFiles(files)
+        } else if (requestCode == peerChooserRequest) {
+            val files = selectedFiles(resultCode, data)
+            val address = chosenPeerAddress
+            val code = chosenPeerCode
+            chosenPeerAddress = null; chosenPeerCode = null
+            if (files.isEmpty()) peerStatus.text = "No files were selected."
+            else if (address != null && code != null) peerService?.sendFiles(address, code, files) { message, done ->
+                runOnUiThread {
+                    if (phoneMode) peerStatus.text = message
+                    if (done != null) Toast.makeText(this, message, if (done) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
     @Deprecated("Deprecated in Java")
-    override fun onBackPressed() { if (web.visibility == View.VISIBLE) showSetup(true) else super.onBackPressed() }
+    override fun onBackPressed() { if (phoneMode) showPcMode() else if (web.visibility == View.VISIBLE) showSetup(true) else super.onBackPressed() }
     override fun onResume() { super.onResume(); isActive = true }
     override fun onPause() { isActive = false; super.onPause() }
-    override fun onDestroy() { pollHandler.removeCallbacks(pollTask); stopDiscovery(); web.destroy(); super.onDestroy() }
+    override fun onDestroy() { pollHandler.removeCallbacks(pollTask); stopDiscovery(); peerService?.stop(); web.destroy(); super.onDestroy() }
 }

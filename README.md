@@ -1,6 +1,6 @@
 # ZiAr
 
-ZiAr transfers files between a Windows PC and an Android phone on the same Wi-Fi network. The Windows app hosts the transfer connection and generates a fresh six-digit pairing code each time it starts. The Android app discovers the PC automatically, then asks for the code shown on Windows. ZiAr does not keep a shared-file library or transfer history. No cloud account is involved.
+ZiAr transfers files between a Windows PC and an Android phone, or directly between two Android phones, on the same Wi-Fi network. A phone can provide a mobile hotspot for the other phone. The Windows app hosts PC transfers and generates a fresh six-digit pairing code each time it starts. The Android app discovers the PC automatically, then asks for the code shown on Windows. ZiAr does not keep a shared-file library or transfer history. No cloud account is involved.
 
 ## Windows
 
@@ -13,6 +13,10 @@ The Windows app shows currently connected devices. Choose **One device** to allo
 ## Android
 
 Open `android/` in Android Studio (Ladybug or newer), let it sync Gradle, and run the `app` module on Android 8.0 or newer. An Android SDK is needed to build the APK. The app searches for the Windows PC on the same Wi-Fi. Once found, enter the six-digit code displayed on Windows. If the network blocks discovery, enter one of the PC's displayed IPv4 addresses manually. Android downloads go to Downloads. Files selected on Android upload directly to the PC, and the app shows a success or error message when the transfer finishes.
+
+### Phone to phone
+
+Open ZiAr on both Android phones and choose **Phone to phone**. Connect both to the same Wi-Fi, or enable a hotspot on one phone and join it from the other. Keep this screen open on both. Tap the other phone under **Nearby phones**, enter the six-digit receive code shown on that phone, and select one or more files. The receiving phone saves them in `Downloads/ZiAr Received`. If discovery is blocked, enter the receiver's displayed IP address with **Send by address**. Android 8 and 9 ask for storage access before receiving files. The code changes whenever phone sharing restarts; no shared-file list or transfer history is kept.
 
 ## Usage
 
