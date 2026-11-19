@@ -123,16 +123,33 @@ test('PC sends once to phone, and phone saves received files without a shared hi
   assert.equal((await (await fetch(phoneUrl + '/api/files', { headers })).json()).length, 0);
 });
 
-test('sanitizes upload names and rejects oversized declarations', async t => {
+test('streams videos and other file types from a paired phone', async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ziar-test-'));
-  const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory: path.join(root, 'received'), port: 0 });
+  const receivedDirectory = path.join(root, 'received');
+  const { server } = createTransferServer({ pendingDirectory: path.join(root, 'pending'), receivedDirectory, port: 0, code: '123456', isDesktopRequest: () => false });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => { server.close(); fs.rmSync(root, { recursive: true, force: true }); });
-  assert.equal(safeName('..\\evil?.txt'), 'evil_.txt');
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const status = await new Promise((resolve, reject) => {
-    const request = http.request(base + '/api/upload?name=x', { method: 'POST', headers: { 'Content-Length': '1073741825' } }, response => { resolve(response.statusCode); response.resume(); });
-    request.on('error', reject); request.end();
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
-  assert.equal(status, 413);
+  assert.equal(safeName('..\\evil?.txt'), 'evil_.txt');
+  assert.equal(server.requestTimeout, 0);
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const pair = await fetch(base + '/api/pair', { method: 'POST', body: '123456' });
+  assert.equal(pair.status, 200);
+  const cookie = pair.headers.get('set-cookie').split(';')[0];
+  const video = Buffer.alloc(2 * 1024 * 1024, 7);
+  const status = await new Promise((resolve, reject) => {
+    const request = http.request(base + '/api/upload?name=clip.mp4', { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'video/mp4' } }, response => {
+      response.resume(); response.on('end', () => resolve(response.statusCode));
+    });
+    request.on('error', reject);
+    request.write(video.subarray(0, 1024 * 1024));
+    request.end(video.subarray(1024 * 1024));
+  });
+  assert.equal(status, 201);
+  assert.deepEqual(fs.readFileSync(path.join(receivedDirectory, 'clip.mp4')), video);
+  const other = await fetch(base + '/api/upload?name=archive.custom', { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/x-custom' }, body: 'arbitrary bytes' });
+  assert.equal(other.status, 201);
+  assert.equal(fs.readFileSync(path.join(receivedDirectory, 'archive.custom'), 'utf8'), 'arbitrary bytes');
 });

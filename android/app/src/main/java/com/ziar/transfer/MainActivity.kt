@@ -18,6 +18,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.text.InputType
 import android.text.InputFilter
@@ -516,16 +517,32 @@ class MainActivity : Activity() {
             peerStatus.text = "Allow file storage to receive files on this phone."
     }
     private fun selectedName(uri: Uri): String {
-        val name = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        val name = try { contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) cursor.getString(0) else null
-        }
+        } } catch (_: Exception) { null }
         return name?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "file"
+    }
+    private fun selectedSize(uri: Uri): Long? = try {
+        contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0).takeIf { it >= 0 } else null
+        }
+    } catch (_: Exception) { null }
+
+    private fun uploadProgress(sent: Long, total: Long?) {
+        val value = total?.takeIf { it > 0 }?.let { ((sent.toDouble() / it) * 100).toInt().coerceIn(0, 100) }
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            val progress = if (value == null) "p.removeAttribute('value')" else "p.value=$value"
+            val label = if (value == null) "Uploading…" else "$value% sent"
+            web.evaluateJavascript("(function(){var b=document.getElementById('progressBox'),p=document.getElementById('progress'),t=document.getElementById('progressText');if(b&&p){b.classList.remove('hidden');$progress}if(t)t.textContent=${JSONObject.quote(label)}})()", null)
+        }
     }
     private fun uploadStatus(message: String, completed: Boolean? = null) {
         runOnUiThread {
             if (isFinishing || isDestroyed) return@runOnUiThread
             val style = when (completed) { true -> "success small"; false -> "error small"; null -> "small" }
-            web.evaluateJavascript("(function(){var m=document.getElementById('message');if(m){m.textContent=${JSONObject.quote(message)};m.className='$style';}})()", null)
+            val hideProgress = if (completed != null) "var b=document.getElementById('progressBox');if(b)b.classList.add('hidden');" else ""
+            web.evaluateJavascript("(function(){var m=document.getElementById('message');if(m){m.textContent=${JSONObject.quote(message)};m.className='$style';}$hideProgress})()", null)
             if (completed != null) Toast.makeText(this, message, if (completed) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
         }
     }
@@ -538,13 +555,15 @@ class MainActivity : Activity() {
                 var connection: HttpURLConnection? = null
                 try {
                     val name = selectedName(uri)
+                    val total = selectedSize(uri)
                     uploadStatus("Sending ${index + 1} of ${files.size}: $name")
+                    uploadProgress(0, total)
                     val url = Uri.parse("http://$host:47831/api/upload").buildUpon().appendQueryParameter("name", name).build().toString()
                     val active = (URL(url).openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"
                         doOutput = true
-                        connectTimeout = 10000
-                        readTimeout = 30000
+                        connectTimeout = 15000
+                        readTimeout = 120000
                         setRequestProperty("Cookie", cookie)
                         setRequestProperty("Content-Type", "application/octet-stream")
                         setChunkedStreamingMode(64 * 1024)
@@ -555,13 +574,16 @@ class MainActivity : Activity() {
                         active.outputStream.use { destination ->
                             val buffer = ByteArray(64 * 1024)
                             var count = 0L
+                            var lastProgress = 0L
                             while (true) {
                                 val length = source.read(buffer)
                                 if (length < 0) break
                                 count += length
-                                if (count > 1024L * 1024 * 1024) throw IOException("File is larger than 1 GB.")
                                 destination.write(buffer, 0, length)
+                                val now = SystemClock.elapsedRealtime()
+                                if (now - lastProgress >= 250) { uploadProgress(count, total); lastProgress = now }
                             }
+                            uploadProgress(count, total)
                         }
                     }
                     if (active.responseCode != 201) {

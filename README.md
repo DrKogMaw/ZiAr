@@ -28,7 +28,7 @@ Android updates require the same signing key and a higher version code. Version 
 
 Use **Choose files** or drag files onto the Windows app to send them to your paired Android phone. While ZiAr is open on the phone, it automatically saves incoming files to Downloads. Files are removed from the PC queue after download, and unsent files are cleared when the Windows app closes. On Android, tap **Choose multiple files** and select several files in the system picker to send them in one batch to the PC's `Downloads/ZiAr Received` folder; click the folder path in the Windows app to open it. ZiAr shows only files currently waiting for the phone, with no history. Duplicate received filenames get a numbered suffix.
 
-PC transfers use local HTTP with a session cookie and a six-digit pairing code. Phone-to-phone transfers use a direct local TCP connection and the receiving phone's six-digit code. Use ZiAr on a trusted private Wi-Fi network or personal hotspot; transfers are not encrypted or available over the internet. The Windows PC must remain on for PC transfers. Each file is limited to 1 GB.
+PC transfers use local HTTP with a session cookie and a six-digit pairing code. Phone-to-phone transfers use a direct local TCP connection and the receiving phone's six-digit code. Use ZiAr on a trusted private Wi-Fi network or personal hotspot; transfers are not encrypted or available over the internet. The Windows PC must remain on for PC transfers. ZiAr accepts all file types and has no fixed file-size limit; transfers still need enough free space on the receiving device and a stable local connection.
 
 ## Tests
 

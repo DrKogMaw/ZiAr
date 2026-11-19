@@ -3,9 +3,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const { Transform } = require('node:stream');
+const { pipeline } = require('node:stream/promises');
 
 const PORT = 47831;
-const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const MAX_FILES = 1000;
 const SESSION_IDLE_MS = 20000;
 const SESSION_AUTH_MS = 12 * 60 * 60 * 1000;
@@ -134,27 +135,28 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
       }
       if (req.method === 'POST' && url.pathname === '/api/upload') {
         const name = url.searchParams.get('name');
-        const length = Number(req.headers['content-length']);
-        if (!name || (!Number.isNaN(length) && (!Number.isFinite(length) || length < 0 || length > MAX_FILE_BYTES))) return sendJson(res, 413, { error: 'File must be 1 GB or smaller.' });
+        const length = req.headers['content-length'] === undefined ? null : Number(req.headers['content-length']);
+        if (!name || (length !== null && (!Number.isSafeInteger(length) || length < 0))) return sendJson(res, 400, { error: 'Invalid file upload.' });
         const destination = loopback ? pendingDirectory : receivedDirectory;
         if (loopback && fs.readdirSync(pendingDirectory).length >= MAX_FILES) return sendJson(res, 507, { error: 'Too many files waiting for the phone.' });
         const target = uniquePath(destination, name);
         const temp = path.join(destination, `.${crypto.randomUUID()}.part`);
         let bytes = 0;
+        req.setTimeout(5 * 60 * 1000, () => req.destroy(new Error('Transfer stalled.')));
         try {
-          const output = fs.createWriteStream(temp, { flags: 'wx' });
-          for await (const chunk of req) {
+          const meter = new Transform({ transform(chunk, _encoding, callback) {
             bytes += chunk.length;
-            if (bytes > MAX_FILE_BYTES || (!Number.isNaN(length) && bytes > length)) throw new Error('File exceeds the size limit.');
-            if (!output.write(chunk)) await new Promise(resolve => output.once('drain', resolve));
-          }
-          await new Promise((resolve, reject) => output.end(error => error ? reject(error) : resolve()));
-          if (!Number.isNaN(length) && bytes !== length) throw new Error('Incomplete upload.');
+            callback(length !== null && bytes > length ? new Error('Upload length did not match the file.') : null, chunk);
+          } });
+          await pipeline(req, meter, fs.createWriteStream(temp, { flags: 'wx' }));
+          if (length !== null && bytes !== length) throw new Error('Incomplete upload.');
           fs.renameSync(temp, target);
           return sendJson(res, 201, { name: path.basename(target), received: !loopback });
         } catch (error) {
-          fs.rmSync(temp, { force: true });
-          return sendJson(res, 400, { error: error.message });
+          try { await fs.promises.rm(temp, { force: true, maxRetries: 5, retryDelay: 100 }); } catch (cleanupError) { console.error('Could not clear interrupted upload:', cleanupError); }
+          if (!res.destroyed && !req.aborted) return sendJson(res, error.code === 'ENOSPC' ? 507 : 400,
+            { error: error.code === 'ENOSPC' ? 'The PC is out of storage space.' : error.message });
+          return;
         }
       }
       if (req.method === 'GET' && url.pathname === '/api/download') {
@@ -171,7 +173,8 @@ function createTransferServer({ pendingDirectory, receivedDirectory, port = PORT
       sendJson(res, 404, { error: 'Not found.' });
     } catch (error) { sendJson(res, 500, { error: error.message }); }
   });
+  server.requestTimeout = 0;
   return { server, code, port, pendingDirectory, receivedDirectory };
 }
 
-module.exports = { createTransferServer, localAddresses, safeName, uniquePath, PORT, MAX_FILE_BYTES };
+module.exports = { createTransferServer, localAddresses, safeName, uniquePath, PORT };

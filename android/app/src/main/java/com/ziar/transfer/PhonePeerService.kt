@@ -180,7 +180,7 @@ internal class PhonePeerService(
 
     private fun handleIncoming(socket: Socket) {
         socket.use { peer ->
-            peer.soTimeout = 30000
+            peer.soTimeout = 120000
             val input = DataInputStream(peer.getInputStream())
             val output = DataOutputStream(peer.getOutputStream())
             try {
@@ -198,12 +198,9 @@ internal class PhonePeerService(
                     output.writeUTF("READY"); output.flush()
                     target.stream.use { destination ->
                         val buffer = ByteArray(64 * 1024)
-                        var count = 0L
                         while (true) {
                             val length = input.read(buffer)
                             if (length < 0) break
-                            count += length
-                            if (count > PeerProtocol.MAX_BYTES) throw IOException("File is larger than 1 GB.")
                             destination.write(buffer, 0, length)
                         }
                     }
@@ -265,7 +262,7 @@ internal class PhonePeerService(
                     status("Sending ${index + 1} of ${files.size}: $name", null)
                     Socket().use { socket ->
                         socket.connect(InetSocketAddress(address, PeerProtocol.TCP_PORT), 5000)
-                        socket.soTimeout = 30000
+                        socket.soTimeout = 120000
                         val output = DataOutputStream(socket.getOutputStream())
                         val input = DataInputStream(socket.getInputStream())
                         output.writeUTF(PeerProtocol.MAGIC)
@@ -277,12 +274,9 @@ internal class PhonePeerService(
                         val source = context.contentResolver.openInputStream(uri) ?: throw IOException("Could not read selected file.")
                         source.use { file ->
                             val buffer = ByteArray(64 * 1024)
-                            var count = 0L
                             while (true) {
                                 val length = file.read(buffer)
                                 if (length < 0) break
-                                count += length
-                                if (count > PeerProtocol.MAX_BYTES) throw IOException("File is larger than 1 GB.")
                                 output.write(buffer, 0, length)
                             }
                         }

@@ -8,7 +8,6 @@ internal object PeerProtocol {
     const val TCP_PORT = 47833
     const val UDP_PORT = 47834
     const val MAGIC = "ZIAR/2"
-    const val MAX_BYTES = 1024L * 1024 * 1024
 
     fun safeName(raw: String): String {
         val base = raw.replace('\\', '/').substringAfterLast('/')
